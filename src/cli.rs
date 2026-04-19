@@ -2,11 +2,32 @@ use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use clap::{ArgAction, CommandFactory, FromArgMatches, Parser};
+use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, ValueEnum};
 
 use crate::download::DEFAULT_GH_PROXY;
 use crate::error::AppError;
 use crate::i18n::{Language, detect_language_from_args_and_env};
+
+const DEBUG_ENV_VAR: &str = "GH_DOWNLOAD_DEBUG";
+const PREFIX_MODE_ENV_VAR: &str = "GH_DOWNLOAD_PREFIX_MODE";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+pub enum PrefixProxyMode {
+    #[default]
+    Direct,
+    Fallback,
+    Prefer,
+}
+
+impl PrefixProxyMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::Fallback => "fallback",
+            Self::Prefer => "prefer",
+        }
+    }
+}
 
 #[derive(Debug, Parser, Clone)]
 #[command(name = "gh-download", version, long_about = None)]
@@ -29,8 +50,14 @@ pub struct Cli {
     #[arg(long, value_name = "URL")]
     pub proxy_base: Option<String>,
 
+    #[arg(long = "prefix-mode", value_enum, value_name = "MODE")]
+    pub prefix_mode: Option<PrefixProxyMode>,
+
     #[arg(long = "lang", value_enum, value_name = "LANG")]
     pub language: Option<Language>,
+
+    #[arg(long, action = ArgAction::SetTrue)]
+    pub debug: bool,
 
     #[arg(long, action = ArgAction::SetTrue)]
     pub no_color: bool,
@@ -44,7 +71,9 @@ pub struct ResolvedOptions {
     pub git_ref: Option<String>,
     pub token: Option<String>,
     pub proxy_base: String,
+    pub prefix_mode: PrefixProxyMode,
     pub language: Language,
+    pub debug: bool,
     pub no_color: bool,
 }
 
@@ -57,12 +86,21 @@ pub fn resolve_cli(cli: Cli) -> Result<ResolvedOptions, AppError> {
     }
 
     let local_target = resolve_local_target(&cli.local_target)?;
-    let proxy_base = resolve_proxy_base(cli.proxy_base.as_deref(), env::var("GH_PROXY_BASE").ok());
+    let prefix_mode = resolve_prefix_mode(
+        cli.prefix_mode,
+        env::var(PREFIX_MODE_ENV_VAR).ok().as_deref(),
+    );
+    let proxy_base = resolve_proxy_base(
+        cli.proxy_base.as_deref(),
+        env::var("GH_PROXY_BASE").ok(),
+        prefix_mode,
+    );
     let token = pick_token(
         cli.token.as_deref(),
         env::var("GITHUB_TOKEN").ok().as_deref(),
         env::var("GH_TOKEN").ok().as_deref(),
     );
+    let debug = resolve_debug(cli.debug, env::var(DEBUG_ENV_VAR).ok().as_deref());
     let language = Language::detect(
         cli.language,
         env::var("LC_ALL").ok().as_deref(),
@@ -77,7 +115,9 @@ pub fn resolve_cli(cli: Cli) -> Result<ResolvedOptions, AppError> {
         git_ref: cli.git_ref.map(|value| value.trim().to_string()),
         token,
         proxy_base,
+        prefix_mode,
         language,
+        debug,
         no_color: cli.no_color,
     })
 }
@@ -105,13 +145,58 @@ pub fn pick_token(
         })
 }
 
-pub fn resolve_proxy_base(explicit: Option<&str>, env_value: Option<String>) -> String {
+pub fn resolve_proxy_base(
+    explicit: Option<&str>,
+    env_value: Option<String>,
+    prefix_mode: PrefixProxyMode,
+) -> String {
     match explicit {
         Some(value) => value.trim().to_string(),
         None => env_value
             .map(|value| value.trim().to_string())
-            .unwrap_or_else(|| DEFAULT_GH_PROXY.to_string()),
+            .unwrap_or_else(|| match prefix_mode {
+                PrefixProxyMode::Direct => String::new(),
+                PrefixProxyMode::Fallback | PrefixProxyMode::Prefer => DEFAULT_GH_PROXY.to_string(),
+            }),
     }
+}
+
+pub fn resolve_prefix_mode(
+    explicit: Option<PrefixProxyMode>,
+    env_value: Option<&str>,
+) -> PrefixProxyMode {
+    explicit
+        .or_else(|| parse_prefix_mode_env(env_value))
+        .unwrap_or_default()
+}
+
+pub fn resolve_debug(explicit: bool, env_value: Option<&str>) -> bool {
+    explicit || parse_bool_env(env_value)
+}
+
+fn parse_prefix_mode_env(value: Option<&str>) -> Option<PrefixProxyMode> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) if value.eq_ignore_ascii_case("direct") => Some(PrefixProxyMode::Direct),
+        Some(value) if value.eq_ignore_ascii_case("fallback") => Some(PrefixProxyMode::Fallback),
+        Some(value) if value.eq_ignore_ascii_case("prefer") => Some(PrefixProxyMode::Prefer),
+        _ => None,
+    }
+}
+
+fn parse_bool_env(value: Option<&str>) -> bool {
+    matches!(
+        value.map(str::trim),
+        Some("1")
+            | Some("true")
+            | Some("TRUE")
+            | Some("True")
+            | Some("yes")
+            | Some("YES")
+            | Some("Yes")
+            | Some("on")
+            | Some("ON")
+            | Some("On")
+    )
 }
 
 pub fn resolve_local_target(path: &Path) -> Result<PathBuf, AppError> {
@@ -194,7 +279,9 @@ pub fn command_for_language(language: Language) -> clap::Command {
         .mut_arg("git_ref", |arg| arg.help(ref_help(language)))
         .mut_arg("token", |arg| arg.help(token_help(language)))
         .mut_arg("proxy_base", |arg| arg.help(proxy_help(language)))
+        .mut_arg("prefix_mode", |arg| arg.help(prefix_mode_help(language)))
         .mut_arg("language", |arg| arg.help(language_help(language)))
+        .mut_arg("debug", |arg| arg.help(debug_help(language)))
         .mut_arg("no_color", |arg| arg.help(no_color_help(language)));
 
     command
@@ -269,10 +356,21 @@ fn token_help(language: Language) -> &'static str {
 fn proxy_help(language: Language) -> &'static str {
     match language {
         Language::En => {
-            "Proxy prefix used for anonymous fallback requests. Defaults to GH_PROXY_BASE or the built-in proxy; pass an empty string to disable it"
+            "URL-prefix proxy base for anonymous raw downloads. Defaults to GH_PROXY_BASE; in fallback/prefer mode it falls back to the built-in gh-proxy when unset"
         }
         Language::Zh => {
-            "匿名请求回退时使用的代理前缀。默认读取 GH_PROXY_BASE 或使用内置代理；传空字符串可关闭"
+            "匿名 raw 下载使用的 URL 前缀代理。默认读取 GH_PROXY_BASE；在 fallback/prefer 模式下未设置时会回退到内置 gh-proxy"
+        }
+    }
+}
+
+fn prefix_mode_help(language: Language) -> &'static str {
+    match language {
+        Language::En => {
+            "Raw download prefix-proxy mode: direct, fallback, or prefer. Defaults to GH_DOWNLOAD_PREFIX_MODE or direct"
+        }
+        Language::Zh => {
+            "raw 下载的前缀代理模式：direct、fallback 或 prefer。默认读取 GH_DOWNLOAD_PREFIX_MODE，未设置时为 direct"
         }
     }
 }
@@ -283,6 +381,15 @@ fn language_help(language: Language) -> &'static str {
             "Force the user-facing language. Defaults to English unless the locale indicates Chinese"
         }
         Language::Zh => "显式指定用户可见语言。默认英文；当 locale 指向中文时自动切换为中文",
+    }
+}
+
+fn debug_help(language: Language) -> &'static str {
+    match language {
+        Language::En => {
+            "Print debug diagnostics for request URLs and download strategy. Defaults to GH_DOWNLOAD_DEBUG"
+        }
+        Language::Zh => "打印请求 URL 和下载策略的调试信息。默认读取 GH_DOWNLOAD_DEBUG",
     }
 }
 
@@ -312,7 +419,84 @@ mod tests {
     }
 
     #[test]
-    fn cli_parses_no_color_and_ref() {
+    fn proxy_base_is_disabled_by_default_in_direct_mode() {
+        assert_eq!(resolve_proxy_base(None, None, PrefixProxyMode::Direct), "");
+    }
+
+    #[test]
+    fn proxy_base_uses_env_when_present() {
+        assert_eq!(
+            resolve_proxy_base(
+                None,
+                Some(" https://proxy.example/ ".to_string()),
+                PrefixProxyMode::Prefer
+            ),
+            "https://proxy.example/"
+        );
+    }
+
+    #[test]
+    fn proxy_base_explicit_empty_disables_env() {
+        assert_eq!(
+            resolve_proxy_base(
+                Some("  "),
+                Some("https://proxy.example/".to_string()),
+                PrefixProxyMode::Prefer
+            ),
+            ""
+        );
+    }
+
+    #[test]
+    fn proxy_base_defaults_to_builtin_proxy_in_fallback_mode() {
+        assert_eq!(
+            resolve_proxy_base(None, None, PrefixProxyMode::Fallback),
+            DEFAULT_GH_PROXY
+        );
+    }
+
+    #[test]
+    fn proxy_base_defaults_to_builtin_proxy_in_prefer_mode() {
+        assert_eq!(
+            resolve_proxy_base(None, None, PrefixProxyMode::Prefer),
+            DEFAULT_GH_PROXY
+        );
+    }
+
+    #[test]
+    fn prefix_mode_defaults_to_direct() {
+        assert_eq!(resolve_prefix_mode(None, None), PrefixProxyMode::Direct);
+    }
+
+    #[test]
+    fn prefix_mode_uses_env_when_present() {
+        assert_eq!(
+            resolve_prefix_mode(None, Some(" prefer ")),
+            PrefixProxyMode::Prefer
+        );
+    }
+
+    #[test]
+    fn prefix_mode_prefers_explicit_value() {
+        assert_eq!(
+            resolve_prefix_mode(Some(PrefixProxyMode::Fallback), Some("prefer")),
+            PrefixProxyMode::Fallback
+        );
+    }
+
+    #[test]
+    fn debug_uses_env_when_flag_is_absent() {
+        assert!(resolve_debug(false, Some("true")));
+        assert!(!resolve_debug(false, Some("0")));
+    }
+
+    #[test]
+    fn debug_flag_overrides_env() {
+        assert!(resolve_debug(true, Some("0")));
+    }
+
+    #[test]
+    fn cli_parses_no_color_ref_prefix_mode_and_debug() {
         let cli = Cli::try_parse_from([
             "gh-download",
             "owner/repo",
@@ -320,15 +504,40 @@ mod tests {
             "./README.md",
             "--ref",
             "main",
+            "--prefix-mode",
+            "prefer",
             "--lang",
             "zh",
+            "--debug",
             "--no-color",
         ])
         .expect("cli should parse");
 
         assert_eq!(cli.git_ref.as_deref(), Some("main"));
+        assert_eq!(cli.prefix_mode, Some(PrefixProxyMode::Prefer));
         assert_eq!(cli.language, Some(Language::Zh));
+        assert!(cli.debug);
         assert!(cli.no_color);
+    }
+
+    #[test]
+    fn resolve_cli_uses_builtin_proxy_for_prefer_mode_when_unset() {
+        let cli = Cli {
+            repo: "owner/repo".to_string(),
+            remote_path: "README.md".to_string(),
+            local_target: PathBuf::from("./README.md"),
+            git_ref: None,
+            token: None,
+            proxy_base: None,
+            prefix_mode: Some(PrefixProxyMode::Prefer),
+            language: Some(Language::En),
+            debug: false,
+            no_color: true,
+        };
+
+        let options = resolve_cli(cli).expect("cli should resolve");
+        assert_eq!(options.prefix_mode, PrefixProxyMode::Prefer);
+        assert_eq!(options.proxy_base, DEFAULT_GH_PROXY);
     }
 
     #[test]

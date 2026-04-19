@@ -2,16 +2,20 @@
 
 ## Purpose
 
-Define the command-line contract and download behavior for fetching files or directories from a GitHub repository path.
+Define the core command-line contract and download behavior for fetching files or directories from a GitHub repository path.
 
 ## Requirements
 
 ### Requirement: CLI accepts GitHub path download inputs
-The `gh-download` CLI SHALL accept a repository identifier, a repository-relative remote path, and a local target path as positional arguments when a download invocation is provided. When the CLI is invoked without any user-provided arguments, it SHALL print the localized help text and exit successfully instead of reporting missing required positional arguments. The CLI SHALL also support `--ref`, `--token`, `--proxy-base`, and `--lang` options, and it MUST use `GITHUB_TOKEN` or `GH_TOKEN` as the default token source when `--token` is not provided.
+The `gh-download` CLI SHALL accept a repository identifier, a repository-relative remote path, and a local target path as positional arguments when a download invocation is provided. When the CLI is invoked without any user-provided arguments, it SHALL print the localized help text and exit successfully instead of reporting missing required positional arguments. The CLI SHALL also support `--ref`, `--token`, `--proxy-base`, `--prefix-mode`, `--debug`, and `--lang` options, and it MUST use `GITHUB_TOKEN` or `GH_TOKEN` as the default token source when `--token` is not provided.
 
 #### Scenario: User provides explicit CLI arguments
 - **WHEN** a user runs `gh-download owner/repo src ./downloads --ref main --token abc --proxy-base https://gh-proxy.com/ --lang en`
 - **THEN** the CLI accepts the invocation and uses the provided repository, remote path, local target, ref, token, proxy base, and language for the download operation
+
+#### Scenario: User provides explicit prefix mode and debug arguments
+- **WHEN** a user runs `gh-download owner/repo README.md ./README.md --proxy-base https://gh-proxy.com/ --prefix-mode prefer --debug`
+- **THEN** the CLI accepts the invocation and uses the provided prefix proxy base, prefix mode, and debug flag for the download operation
 
 #### Scenario: User relies on environment token defaults
 - **WHEN** a user runs `gh-download owner/repo README.md ./README.md` with `GITHUB_TOKEN` or `GH_TOKEN` set
@@ -69,23 +73,39 @@ For directory downloads, the CLI SHALL recursively enumerate all nested files be
 - **WHEN** GitHub metadata includes an entry type that is not a regular file or directory
 - **THEN** the CLI skips that entry and prints a warning identifying the skipped repository path and entry type
 
-### Requirement: CLI retries anonymous requests through the configured proxy when direct access fails
-When the CLI is running without an authentication token and a proxy base is configured, it SHALL retry eligible GitHub metadata or raw file requests through the configured proxy after direct GitHub rate-limit, server-side, or network failures. The CLI MUST NOT forward authentication credentials to the public proxy path.
+### Requirement: CLI enforces raw-download proxy boundaries
+The CLI SHALL ignore ambient system proxy environment variables for its direct HTTP(S) requests. GitHub metadata API requests MUST NOT be retried through URL-prefix proxies such as `gh-proxy`. Anonymous raw file downloads SHALL follow the explicit prefix-proxy mode behavior defined by the `prefix-proxy-mode` capability. The CLI MUST NOT forward authentication credentials to the public proxy path.
 
-#### Scenario: Anonymous GitHub API request is rate limited
-- **WHEN** a direct anonymous GitHub request fails with a retryable HTTP status such as `403`, `429`, or a transient server error
-- **THEN** the CLI retries the request through the configured proxy and informs the user that proxy fallback is being used
+#### Scenario: Direct request ignores system proxy configuration
+- **WHEN** a user configures a standard proxy environment variable such as `HTTP_PROXY`, `HTTPS_PROXY`, or `ALL_PROXY`
+- **THEN** the CLI still sends direct requests without using that ambient system proxy configuration
+
+#### Scenario: Anonymous GitHub metadata API request is rate limited
+- **WHEN** a direct anonymous GitHub metadata API request fails with a retryable HTTP status such as `403`, `429`, or a transient server error
+- **THEN** the CLI does not retry that metadata request through the URL-prefix fallback proxy
+
+#### Scenario: Anonymous raw file download follows prefix mode behavior
+- **WHEN** an anonymous raw file download is attempted
+- **THEN** the CLI applies the configured prefix-proxy mode behavior for the raw file URL without changing the metadata API path
 
 #### Scenario: Authenticated request fails
 - **WHEN** a request is made with an explicit token or an environment token
 - **THEN** the CLI does not send that credential through the proxy fallback path
 
 ### Requirement: CLI provides concise colored status output and actionable failure guidance
-The CLI SHALL print a startup summary that includes the repository, ref selection, remote path, and local target. It SHALL print concise progress messages during downloads and a completion summary at the end of a successful operation. On failure, the CLI MUST present a short explanation plus at least one remediation suggestion for common categories including authentication, missing path or ref, network failure, and local filesystem write failure.
+The CLI SHALL print a structured startup summary with separators that includes the repository, ref selection, remote path, and local target. For directory downloads, it SHALL print the discovered file count with the remote directory and the created local directory before file progress. It SHALL print concise per-file download progress messages and a structured completion summary at the end of a successful operation. On failure, the CLI MUST present a short explanation plus at least one remediation suggestion for common categories including authentication, missing path or ref, network failure, and local filesystem write failure.
 
 #### Scenario: Successful download reports progress and completion
 - **WHEN** a download completes successfully
 - **THEN** the CLI shows a readable progress trail and a final success summary that identifies the saved local path
+
+#### Scenario: Anonymous fallback proxy retry is used
+- **WHEN** the CLI retries an eligible anonymous raw file download through `--proxy-base`
+- **THEN** the warning output identifies the full generated fallback URL and redacts any embedded credentials before printing it
+
+#### Scenario: Direct raw file download fails before Raw API fallback
+- **WHEN** a direct file `download_url` attempt fails and the CLI continues to the next raw download strategy
+- **THEN** the CLI prints a short warning that names the failure stage without requiring the user to infer what "direct URL unavailable" means
 
 #### Scenario: Download fails due to missing authentication
 - **WHEN** GitHub rejects a request because authentication is missing or anonymous access is rate limited

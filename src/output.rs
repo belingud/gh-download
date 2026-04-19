@@ -2,6 +2,7 @@ use crate::cli::ResolvedOptions;
 use crate::download::format_remote_path;
 use crate::error::UserFacingError;
 use crate::i18n::Language;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct Output {
@@ -15,51 +16,48 @@ impl Output {
     }
 
     pub fn startup(&self, options: &ResolvedOptions) {
-        println!("{}", self.paint("34", "● gh-download"));
+        self.print_separator();
         println!(
-            "{} {}",
+            "{}{}",
             self.paint("34", self.label_repository()),
             options.repo
         );
         println!(
-            "{} {}",
-            self.paint("34", self.label_ref()),
+            "{}{}",
+            self.paint("32", self.label_ref()),
             options
                 .git_ref
                 .as_deref()
                 .unwrap_or(self.default_ref_label())
         );
         println!(
-            "{} {}",
-            self.paint("34", self.label_remote()),
+            "{}{}",
+            self.paint("33", self.label_remote()),
             format_remote_path(&options.remote_path)
         );
         println!(
-            "{} {}",
-            self.paint("34", self.label_local()),
+            "{}{}",
+            self.paint("35", self.label_local()),
             options.local_target.display()
         );
-        println!();
+        self.print_separator();
     }
 
-    pub fn scan_directory(&self) {
-        println!(
-            "{} {}",
-            self.paint("33", "↻"),
-            self.message_scanning_directory()
-        );
+    pub fn found_directory(&self, count: usize, remote_path: &str) {
+        println!("{}", self.message_found_files(count, remote_path));
     }
 
-    pub fn found_files(&self, count: usize) {
+    pub fn created_directory(&self, path: &Path) {
         println!(
-            "{} {}",
-            self.paint("34", "ℹ"),
-            self.message_found_files(count)
+            "{}{}",
+            self.paint("34", self.label_created_directory()),
+            path.display()
         );
+        self.print_separator();
     }
 
     pub fn downloading(&self, path: &str) {
-        println!("{} {}", self.paint("34", "↓"), path);
+        println!("{}{}", self.paint("34", self.label_downloading()), path);
     }
 
     pub fn warning(&self, message: &str) {
@@ -68,6 +66,24 @@ impl Output {
 
     pub fn success(&self, message: &str) {
         println!("{} {}", self.paint("32", "✔"), message);
+    }
+
+    pub fn completion(
+        &self,
+        repo: &str,
+        remote_path: &str,
+        saved_path: &Path,
+        files_downloaded: usize,
+        skipped_entries: usize,
+    ) {
+        self.print_separator();
+        println!("{}", self.message_completion(repo, remote_path, saved_path));
+        if files_downloaded > 1 || skipped_entries > 0 {
+            println!(
+                "{}",
+                self.message_download_stats(files_downloaded, skipped_entries)
+            );
+        }
     }
 
     pub fn print_user_error(&self, error: &UserFacingError) {
@@ -83,17 +99,17 @@ impl Output {
 
     fn label_repository(&self) -> &'static str {
         if self.language.is_chinese() {
-            "仓库"
+            "📦 仓库："
         } else {
-            "Repository"
+            "📦 Repository:"
         }
     }
 
     fn label_ref(&self) -> &'static str {
         if self.language.is_chinese() {
-            "引用"
+            "🌿 分支："
         } else {
-            "Ref"
+            "🌿 Ref:"
         }
     }
 
@@ -107,17 +123,33 @@ impl Output {
 
     fn label_remote(&self) -> &'static str {
         if self.language.is_chinese() {
-            "远端"
+            "📂 远端路径："
         } else {
-            "Remote"
+            "📂 Remote Path:"
         }
     }
 
     fn label_local(&self) -> &'static str {
         if self.language.is_chinese() {
-            "本地"
+            "💾 本地路径："
         } else {
-            "Local"
+            "💾 Local Path:"
+        }
+    }
+
+    fn label_created_directory(&self) -> &'static str {
+        if self.language.is_chinese() {
+            "📁 创建本地目录："
+        } else {
+            "📁 Created Local Directory:"
+        }
+    }
+
+    fn label_downloading(&self) -> &'static str {
+        if self.language.is_chinese() {
+            "⬇️ 下载："
+        } else {
+            "⬇️ Download:"
         }
     }
 
@@ -137,20 +169,63 @@ impl Output {
         }
     }
 
-    fn message_scanning_directory(&self) -> &'static str {
+    fn message_found_files(&self, count: usize, remote_path: &str) -> String {
         if self.language.is_chinese() {
-            "正在读取目录结构..."
+            format!(
+                "{} 发现 {} 个文件，目录：{}",
+                self.paint("33", "🔎"),
+                count,
+                format_remote_path(remote_path)
+            )
         } else {
-            "Reading directory structure..."
+            format!(
+                "{} Found {} files in directory: {}",
+                self.paint("33", "🔎"),
+                count,
+                format_remote_path(remote_path)
+            )
         }
     }
 
-    fn message_found_files(&self, count: usize) -> String {
+    fn message_completion(&self, repo: &str, remote_path: &str, saved_path: &Path) -> String {
         if self.language.is_chinese() {
-            format!("发现 {} 个文件", count)
+            format!(
+                "{} 完成：{} 的 {} 已保存到 {}",
+                self.paint("32", "✅"),
+                repo,
+                format_remote_path(remote_path),
+                saved_path.display()
+            )
         } else {
-            format!("Found {} files", count)
+            format!(
+                "{} Done: {} {} saved to {}",
+                self.paint("32", "✅"),
+                repo,
+                format_remote_path(remote_path),
+                saved_path.display()
+            )
         }
+    }
+
+    fn message_download_stats(&self, files_downloaded: usize, skipped_entries: usize) -> String {
+        if self.language.is_chinese() {
+            format!(
+                "共下载 {} 个文件，跳过 {} 个条目",
+                files_downloaded, skipped_entries
+            )
+        } else {
+            format!(
+                "Downloaded {} files, skipped {} entries",
+                files_downloaded, skipped_entries
+            )
+        }
+    }
+
+    fn print_separator(&self) {
+        println!(
+            "{}",
+            self.paint("90", "-------------------------------------")
+        );
     }
 
     fn paint(&self, code: &str, text: &str) -> String {
@@ -159,5 +234,36 @@ impl Output {
         } else {
             text.to_string()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[test]
+    fn chinese_found_directory_mentions_count_and_remote_path() {
+        let output = Output::new(false, Language::Zh);
+
+        assert_eq!(
+            output.message_found_files(11, "skills/baoyu-translate"),
+            "🔎 发现 11 个文件，目录：skills/baoyu-translate"
+        );
+    }
+
+    #[test]
+    fn chinese_completion_mentions_repo_remote_path_and_saved_path() {
+        let output = Output::new(false, Language::Zh);
+
+        assert_eq!(
+            output.message_completion(
+                "jimliu/baoyu-skills",
+                "skills/baoyu-translate",
+                Path::new("/tmp/baoyu-translate")
+            ),
+            "✅ 完成：jimliu/baoyu-skills 的 skills/baoyu-translate 已保存到 /tmp/baoyu-translate"
+        );
     }
 }

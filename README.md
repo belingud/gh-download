@@ -16,7 +16,8 @@ It works well when you want to:
 - Download a directory recursively
 - Choose a branch, tag, or commit with `--ref`
 - Access private repositories with `GITHUB_TOKEN` or `GH_TOKEN`
-- Fall back to a proxy when anonymous requests fail
+- Support explicit prefix-proxy modes for raw file downloads
+- Support opt-in debug output for request URLs and strategy selection
 - Show friendly output with actionable error suggestions
 - Switch between English and Chinese automatically or explicitly
 
@@ -57,7 +58,7 @@ The compiled binary will be available at:
 Basic syntax:
 
 ```bash
-gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--proxy-base <url>] [--lang <en|zh>] [--no-color]
+gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--lang <en|zh>] [--debug] [--no-color]
 ```
 
 Run `gh-download` without arguments to show the help screen in the effective language.
@@ -101,15 +102,19 @@ gh-download owner/repo docs ./docs --lang en
 - `<local-target>`: Local output path
 - `--ref`: Branch, tag, or commit SHA
 - `--token`: GitHub token
-- `--proxy-base`: Proxy prefix used when anonymous requests fail
+- `--proxy-base`: URL-prefix proxy base used for anonymous raw file download retry or prefer mode
+- `--prefix-mode`: Raw download prefix-proxy mode, `direct`, `fallback`, or `prefer`
 - `--lang`: Explicit output language, `en` or `zh`
+- `--debug`: Print debug diagnostics for request URLs and strategy selection
 - `--no-color`: Disable ANSI color output
 
 ### Environment variables
 
 - `GITHUB_TOKEN`: GitHub token, preferred over `GH_TOKEN`
 - `GH_TOKEN`: Fallback GitHub token variable
-- `GH_PROXY_BASE`: Default proxy prefix
+- `GH_PROXY_BASE`: Explicit URL-prefix proxy base override
+- `GH_DOWNLOAD_PREFIX_MODE`: Default raw download prefix-proxy mode
+- `GH_DOWNLOAD_DEBUG`: Enable debug diagnostics when set to a truthy value
 
 ### Language behavior
 
@@ -117,24 +122,73 @@ gh-download owner/repo docs ./docs --lang en
 - If `LC_ALL`, `LC_MESSAGES`, or `LANG` resolves to a Chinese locale, output switches to Chinese automatically
 - `--lang` has the highest priority and overrides locale detection
 
+### Prefix proxy behavior
+
+- `--proxy-base` and `GH_PROXY_BASE` are used only for raw file download URLs, never for GitHub metadata API requests
+- `--prefix-mode direct` is the default behavior
+- `--prefix-mode fallback` retries a raw file download through the prefix proxy after a retryable direct-download failure, using the built-in `https://gh-proxy.com/` when no explicit proxy base is set
+- `--prefix-mode prefer` tries the prefix proxy first and falls back to the direct raw file URL if the prefix attempt fails, using the built-in `https://gh-proxy.com/` when no explicit proxy base is set
+- GitHub metadata API requests are not sent through URL-prefix fallback proxies such as `gh-proxy`
+- When a token is present, `gh-download` will not forward that credential to the public fallback proxy
+- When prefix retry is used, the warning output prints the full generated fallback URL with any embedded credentials redacted
+
+### Debug behavior
+
+- `--debug` and `GH_DOWNLOAD_DEBUG` enable flow-level diagnostics
+- Debug output includes the generated GitHub metadata URL, resolved raw download URL, generated prefix URL when applicable, and the selected raw download strategy
+- Debug output is written to `stderr` and does not change download behavior
+
+Recommended setup:
+
+- Keep the default `direct` mode for portability in open source usage
+- Set `GH_DOWNLOAD_PREFIX_MODE=fallback` if you want raw file URLs retried through the built-in gh-proxy after direct-download failures
+- Set `GH_DOWNLOAD_PREFIX_MODE=prefer` if you want raw file URLs to try the built-in gh-proxy before direct download
+- Set `GH_PROXY_BASE=...` only when you want to override the built-in prefix proxy
+
 ## Output examples
 
 Success output:
 
 ```text
-● gh-download
-Repository owner/repo
-Ref main
-Remote src
-Local /tmp/downloads
-
-↻ Reading directory structure...
-ℹ Found 3 files
-↓ main.rs
-↓ nested/lib.rs
-↓ nested/mod.rs
-✔ Done, saved to /tmp/downloads/src
+-------------------------------------
+📦 Repository:owner/repo
+🌿 Ref:main
+📂 Remote Path:src
+💾 Local Path:/tmp/downloads
+-------------------------------------
+🔎 Found 3 files in directory: src
+📁 Created Local Directory:/tmp/downloads/src
+-------------------------------------
+⬇️ Download:main.rs
+⬇️ Download:nested/lib.rs
+⬇️ Download:nested/mod.rs
+-------------------------------------
+✅ Done: owner/repo src saved to /tmp/downloads/src
 Downloaded 3 files, skipped 0 entries
+```
+
+Prefix-proxy output:
+
+```text
+-------------------------------------
+📦 Repository:owner/repo
+🌿 Ref:default branch
+📂 Remote Path:README.md
+💾 Local Path:/tmp/README.md
+-------------------------------------
+⚠ Direct file download failed, retrying through prefix proxy: https://gh-proxy.com/https://raw.githubusercontent.com/OWNER/REPO/REF/README.md
+⬇️ Download:README.md
+-------------------------------------
+✅ Done: owner/repo README.md saved to /tmp/README.md
+```
+
+Debug output:
+
+```text
+[debug] metadata-url: https://api.github.com/repos/owner/repo/contents/README.md
+[debug] download-url: https://raw.githubusercontent.com/owner/repo/main/README.md
+[debug] prefix-url: https://gh-proxy.com/https://raw.githubusercontent.com/owner/repo/main/README.md
+[debug] raw-download-strategy: prefix-proxy
 ```
 
 Error output:

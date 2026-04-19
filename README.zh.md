@@ -16,7 +16,8 @@
 - 支持递归下载整个目录
 - 支持通过 `--ref` 指定分支、tag 或 commit
 - 支持私有仓库访问，可读取 `GITHUB_TOKEN` 或 `GH_TOKEN`
-- 支持匿名请求失败时通过代理回退
+- 支持 raw 文件下载的显式前缀代理模式
+- 支持按需开启的请求 URL 和策略调试输出
 - 输出友好，错误时会给出明确建议
 - 支持英文和中文输出，可按 locale 自动切换，也可显式指定
 
@@ -57,7 +58,7 @@ cargo build --release
 基本用法：
 
 ```bash
-gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--proxy-base <url>] [--lang <en|zh>] [--no-color]
+gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--lang <en|zh>] [--debug] [--no-color]
 ```
 
 直接运行 `gh-download` 且不带参数时，会按当前生效语言显示帮助信息。
@@ -101,15 +102,19 @@ gh-download owner/repo docs ./docs --lang en
 - `<local-target>`: 本地输出路径
 - `--ref`: 分支、tag 或 commit SHA
 - `--token`: GitHub token
-- `--proxy-base`: 匿名请求失败时使用的代理前缀
+- `--proxy-base`: raw 文件下载重试或 prefer 模式使用的 URL 前缀代理基址
+- `--prefix-mode`: raw 下载前缀代理模式，`direct`、`fallback` 或 `prefer`
 - `--lang`: 显式指定输出语言，支持 `en` 和 `zh`
+- `--debug`: 打印请求 URL 和策略选择的调试信息
 - `--no-color`: 关闭 ANSI 彩色输出
 
 ### 环境变量
 
 - `GITHUB_TOKEN`: GitHub token，优先于 `GH_TOKEN`
 - `GH_TOKEN`: GitHub token 备用变量
-- `GH_PROXY_BASE`: 默认代理前缀
+- `GH_PROXY_BASE`: 显式覆盖 URL 前缀代理基址
+- `GH_DOWNLOAD_PREFIX_MODE`: 默认的 raw 下载前缀代理模式
+- `GH_DOWNLOAD_DEBUG`: 为真值时开启调试输出
 
 ### 语言规则
 
@@ -117,24 +122,73 @@ gh-download owner/repo docs ./docs --lang en
 - 如果 `LC_ALL`、`LC_MESSAGES` 或 `LANG` 的有效 locale 指向中文，则自动切换为中文
 - `--lang` 优先级最高，可覆盖 locale 检测
 
+### 前缀代理行为
+
+- `--proxy-base` 和 `GH_PROXY_BASE` 只用于 raw 文件下载 URL，不用于 GitHub metadata API 请求
+- 默认模式是 `--prefix-mode direct`
+- `--prefix-mode fallback` 会在直连 raw 文件下载出现可重试失败后再走前缀代理；如果未显式设置代理基址，则使用内置的 `https://gh-proxy.com/`
+- `--prefix-mode prefer` 会先尝试前缀代理，再在失败后回退到直连 raw 文件 URL；如果未显式设置代理基址，则使用内置的 `https://gh-proxy.com/`
+- GitHub metadata API 请求不会发送到 `gh-proxy` 这类 URL 前缀式回退代理
+- 当请求带有 token 时，`gh-download` 不会把该凭据转发到公共回退代理
+- 当前缀代理重试被触发时，警告输出会打印完整生成的回退 URL，并自动打码其中可能包含的凭据
+
+### Debug 行为
+
+- `--debug` 和 `GH_DOWNLOAD_DEBUG` 会开启流程级调试输出
+- 调试输出包含生成的 GitHub metadata URL、解析出的 raw 下载 URL、适用时生成的前缀代理 URL，以及当前选择的 raw 下载策略
+- 调试输出写到 `stderr`，不会改变下载行为
+
+推荐方式：
+
+- 对外保持默认 `direct` 模式，兼顾开源场景下的可移植性
+- 如果希望直连失败后再让 raw 文件 URL 走内置 gh-proxy，可设置 `GH_DOWNLOAD_PREFIX_MODE=fallback`
+- 如果希望 raw 文件 URL 一开始就优先走内置 gh-proxy，可设置 `GH_DOWNLOAD_PREFIX_MODE=prefer`
+- 只有在你想覆盖内置前缀代理时，才需要设置 `GH_PROXY_BASE=...`
+
 ## 输出示例
 
 成功输出：
 
 ```text
-● gh-download
-仓库 owner/repo
-引用 main
-远端 src
-本地 /tmp/downloads
-
-↻ 正在读取目录结构...
-ℹ 发现 3 个文件
-↓ main.rs
-↓ nested/lib.rs
-↓ nested/mod.rs
-✔ 完成，已保存到 /tmp/downloads/src
+-------------------------------------
+📦 仓库：owner/repo
+🌿 分支：main
+📂 远端路径：src
+💾 本地路径：/tmp/downloads
+-------------------------------------
+🔎 发现 3 个文件，目录：src
+📁 创建本地目录：/tmp/downloads/src
+-------------------------------------
+⬇️ 下载：main.rs
+⬇️ 下载：nested/lib.rs
+⬇️ 下载：nested/mod.rs
+-------------------------------------
+✅ 完成：owner/repo 的 src 已保存到 /tmp/downloads/src
 共下载 3 个文件，跳过 0 个条目
+```
+
+前缀代理输出：
+
+```text
+-------------------------------------
+📦 仓库：owner/repo
+🌿 分支：默认分支
+📂 远端路径：README.md
+💾 本地路径：/tmp/README.md
+-------------------------------------
+⚠ 直连文件下载失败，正在通过前缀代理重试：https://gh-proxy.com/https://raw.githubusercontent.com/OWNER/REPO/REF/README.md
+⬇️ 下载：README.md
+-------------------------------------
+✅ 完成：owner/repo 的 README.md 已保存到 /tmp/README.md
+```
+
+Debug 输出：
+
+```text
+[debug] metadata-url: https://api.github.com/repos/owner/repo/contents/README.md
+[debug] download-url: https://raw.githubusercontent.com/owner/repo/main/README.md
+[debug] prefix-url: https://gh-proxy.com/https://raw.githubusercontent.com/owner/repo/main/README.md
+[debug] raw-download-strategy: prefix-proxy
 ```
 
 错误输出：

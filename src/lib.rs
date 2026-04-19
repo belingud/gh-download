@@ -5,8 +5,9 @@ mod i18n;
 mod output;
 
 pub use cli::{
-    Cli, ResolvedOptions, command, command_for_language, parse_cli_from_args, parse_cli_from_env,
-    pick_token, resolve_cli, resolve_local_target, resolve_proxy_base,
+    Cli, PrefixProxyMode, ResolvedOptions, command, command_for_language, parse_cli_from_args,
+    parse_cli_from_env, pick_token, resolve_cli, resolve_debug, resolve_local_target,
+    resolve_prefix_mode, resolve_proxy_base,
 };
 pub use download::{
     DEFAULT_GH_PROXY, DEFAULT_GITHUB_API_BASE, DownloadStats, RunOutcome, Runner, RuntimeConfig,
