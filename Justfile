@@ -23,7 +23,7 @@ version:
 # - bump Cargo.toml to the target version
 # - refresh Cargo.lock
 # - run fmt, tests, and a crates.io dry-run
-# - create a release commit and local tag
+# - create a release commit and a local annotated tag
 # This does not publish to crates.io and does not push to GitHub.
 prepare-release version:
   #!/usr/bin/env bash
@@ -61,7 +61,7 @@ prepare-release version:
 
   git add Cargo.toml Cargo.lock
   git commit -m "chore: release v${version}"
-  git tag "v${version}"
+  git tag -a "v${version}" -m "v${version}"
 
   echo "Prepared release v${version}."
   echo "Next step: just publish ${version}"
@@ -69,7 +69,7 @@ prepare-release version:
 # Publish an already prepared release:
 # - require Cargo.toml and the local tag to match
 # - publish to crates.io
-# - push the current branch and tags
+# - push the current branch and the matching release tag
 # Pushing the tag will trigger the GitHub Actions release workflow.
 publish version:
   #!/usr/bin/env bash
@@ -77,7 +77,6 @@ publish version:
 
   version="{{version}}"
   version="${version#v}"
-  branch="$(git rev-parse --abbrev-ref HEAD)"
 
   current_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
   if [[ "${current_version}" != "${version}" ]]; then
@@ -90,7 +89,15 @@ publish version:
     exit 1
   fi
 
-  cargo publish --registry crates-io
-  git push origin "${branch}" --follow-tags
+  tag_commit="$(git rev-list -n 1 "v${version}")"
+  head_commit="$(git rev-parse HEAD)"
+  if [[ "${tag_commit}" != "${head_commit}" ]]; then
+    echo "tag v${version} is not pointing at HEAD. Check out the tagged release commit before publishing." >&2
+    exit 1
+  fi
 
-  echo "Published v${version} and pushed ${branch} with tags."
+  cargo publish --registry crates-io
+  git push origin HEAD
+  git push origin "v${version}"
+
+  echo "Published v${version} and pushed the release commit and tag."
