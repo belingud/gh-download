@@ -19,9 +19,19 @@ pub use i18n::{Language, detect_language_from_args_and_env};
 pub use output::Output;
 
 pub fn run_cli(cli: Cli) -> Result<RunOutcome, AppError> {
+    let github_token = std::env::var("GITHUB_TOKEN").ok();
+    let gh_token = std::env::var("GH_TOKEN").ok();
+    let token_source = crate::cli::debug_token_source_label(
+        cli.token.as_deref(),
+        github_token.as_deref(),
+        gh_token.as_deref(),
+    );
     let options = resolve_cli(cli)?;
     let output = Output::new(!options.no_color, options.language);
     output.startup(&options);
+    if options.debug {
+        eprintln!("[debug] token-source: {}", token_source);
+    }
     let runner = Runner::new(RuntimeConfig::default(), output);
     runner.run(&options)
 }

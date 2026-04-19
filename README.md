@@ -17,7 +17,7 @@ It works well when you want to:
 - Choose a branch, tag, or commit with `--ref`
 - Access private repositories with `GITHUB_TOKEN` or `GH_TOKEN`
 - Support explicit prefix-proxy modes for raw file downloads
-- Support opt-in debug output for request URLs and strategy selection
+- Support opt-in debug output for request URLs, token source, and strategy selection
 - Show friendly output with actionable error suggestions
 - Switch between English and Chinese automatically or explicitly
 
@@ -105,7 +105,7 @@ gh-download owner/repo docs ./docs --lang en
 - `--proxy-base`: URL-prefix proxy base used for anonymous raw file download retry or prefer mode
 - `--prefix-mode`: Raw download prefix-proxy mode, `direct`, `fallback`, or `prefer`
 - `--lang`: Explicit output language, `en` or `zh`
-- `--debug`: Print debug diagnostics for request URLs and strategy selection
+- `--debug`: Print debug diagnostics for request URLs, token source, and strategy selection
 - `--no-color`: Disable ANSI color output
 
 ### Environment variables
@@ -135,7 +135,7 @@ gh-download owner/repo docs ./docs --lang en
 ### Debug behavior
 
 - `--debug` and `GH_DOWNLOAD_DEBUG` enable flow-level diagnostics
-- Debug output includes the generated GitHub metadata URL, resolved raw download URL, generated prefix URL when applicable, and the selected raw download strategy
+- Debug output includes the generated GitHub metadata URL, the detected token source label, the resolved raw download URL, the generated prefix URL when applicable, and the selected raw download strategy
 - Debug output is written to `stderr` and does not change download behavior
 
 Recommended setup:
@@ -186,6 +186,7 @@ Debug output:
 
 ```text
 [debug] metadata-url: https://api.github.com/repos/owner/repo/contents/README.md
+[debug] token-source: GITHUB_TOKEN
 [debug] download-url: https://raw.githubusercontent.com/owner/repo/main/README.md
 [debug] prefix-url: https://gh-proxy.com/https://raw.githubusercontent.com/owner/repo/main/README.md
 [debug] raw-download-strategy: prefix-proxy

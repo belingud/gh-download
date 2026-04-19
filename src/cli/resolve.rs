@@ -60,22 +60,17 @@ pub fn pick_token(
     github_token: Option<&str>,
     gh_token: Option<&str>,
 ) -> Option<String> {
-    explicit
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            github_token
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
-        .or_else(|| {
-            gh_token
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
+    selected_token(explicit, github_token, gh_token).map(|(value, _)| value.to_string())
+}
+
+pub(crate) fn debug_token_source_label(
+    explicit: Option<&str>,
+    github_token: Option<&str>,
+    gh_token: Option<&str>,
+) -> &'static str {
+    selected_token(explicit, github_token, gh_token)
+        .map(|(_, source)| source)
+        .unwrap_or("none")
 }
 
 pub fn resolve_proxy_base(
@@ -143,6 +138,29 @@ fn parse_bool_env(value: Option<&str>) -> bool {
     )
 }
 
+fn selected_token<'a>(
+    explicit: Option<&'a str>,
+    github_token: Option<&'a str>,
+    gh_token: Option<&'a str>,
+) -> Option<(&'a str, &'static str)> {
+    explicit
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| (value, "--token"))
+        .or_else(|| {
+            github_token
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| (value, "GITHUB_TOKEN"))
+        })
+        .or_else(|| {
+            gh_token
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| (value, "GH_TOKEN"))
+        })
+}
+
 fn expand_home(path: &Path) -> Result<PathBuf, AppError> {
     let raw = path.to_string_lossy();
     if raw == "~" {
@@ -180,6 +198,20 @@ mod tests {
             Some("github".to_string())
         );
         assert_eq!(pick_token(None, None, Some("gh")), Some("gh".to_string()));
+    }
+
+    #[test]
+    fn debug_token_source_reports_explicit_then_env_precedence() {
+        assert_eq!(
+            debug_token_source_label(Some("explicit"), Some("github"), Some("gh")),
+            "--token"
+        );
+        assert_eq!(
+            debug_token_source_label(None, Some("github"), Some("gh")),
+            "GITHUB_TOKEN"
+        );
+        assert_eq!(debug_token_source_label(None, None, Some("gh")), "GH_TOKEN");
+        assert_eq!(debug_token_source_label(None, None, None), "none");
     }
 
     #[test]

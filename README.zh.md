@@ -17,7 +17,7 @@
 - 支持通过 `--ref` 指定分支、tag 或 commit
 - 支持私有仓库访问，可读取 `GITHUB_TOKEN` 或 `GH_TOKEN`
 - 支持 raw 文件下载的显式前缀代理模式
-- 支持按需开启的请求 URL 和策略调试输出
+- 支持按需开启的请求 URL、token 来源和策略调试输出
 - 输出友好，错误时会给出明确建议
 - 支持英文和中文输出，可按 locale 自动切换，也可显式指定
 
@@ -105,7 +105,7 @@ gh-download owner/repo docs ./docs --lang en
 - `--proxy-base`: raw 文件下载重试或 prefer 模式使用的 URL 前缀代理基址
 - `--prefix-mode`: raw 下载前缀代理模式，`direct`、`fallback` 或 `prefer`
 - `--lang`: 显式指定输出语言，支持 `en` 和 `zh`
-- `--debug`: 打印请求 URL 和策略选择的调试信息
+- `--debug`: 打印请求 URL、token 来源和策略选择的调试信息
 - `--no-color`: 关闭 ANSI 彩色输出
 
 ### 环境变量
@@ -135,7 +135,7 @@ gh-download owner/repo docs ./docs --lang en
 ### Debug 行为
 
 - `--debug` 和 `GH_DOWNLOAD_DEBUG` 会开启流程级调试输出
-- 调试输出包含生成的 GitHub metadata URL、解析出的 raw 下载 URL、适用时生成的前缀代理 URL，以及当前选择的 raw 下载策略
+- 调试输出包含生成的 GitHub metadata URL、识别到的 token 来源标签、解析出的 raw 下载 URL、适用时生成的前缀代理 URL，以及当前选择的 raw 下载策略
 - 调试输出写到 `stderr`，不会改变下载行为
 
 推荐方式：
@@ -186,6 +186,7 @@ Debug 输出：
 
 ```text
 [debug] metadata-url: https://api.github.com/repos/owner/repo/contents/README.md
+[debug] token-source: GITHUB_TOKEN
 [debug] download-url: https://raw.githubusercontent.com/owner/repo/main/README.md
 [debug] prefix-url: https://gh-proxy.com/https://raw.githubusercontent.com/owner/repo/main/README.md
 [debug] raw-download-strategy: prefix-proxy

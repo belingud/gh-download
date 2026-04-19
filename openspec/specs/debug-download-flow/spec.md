@@ -13,9 +13,9 @@ The CLI SHALL support an explicit debug mode that prints detailed download-flow 
 - **WHEN** a user runs the CLI without enabling debug mode
 - **THEN** the CLI does not print diagnostic request-construction or strategy-selection output
 
-#### Scenario: Debug mode prints request URLs and strategy choices
+#### Scenario: Debug mode prints request URLs, token source, and strategy choices
 - **WHEN** a user enables debug mode during a download
-- **THEN** the CLI prints the generated GitHub metadata URL, resolved raw file download URL, generated prefix-proxy URL when applicable, and the selected raw download strategy
+- **THEN** the CLI prints the generated GitHub metadata URL, the detected token source label when one is recognized, the resolved raw file download URL, the generated prefix-proxy URL when applicable, and the selected raw download strategy
 
 #### Scenario: Debug mode does not change download behavior
 - **WHEN** a user enables debug mode
