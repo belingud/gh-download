@@ -60,6 +60,8 @@ Basic syntax:
 gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--proxy-base <url>] [--lang <en|zh>] [--no-color]
 ```
 
+Run `gh-download` without arguments to show the help screen in the effective language.
+
 Download a single file:
 
 ```bash

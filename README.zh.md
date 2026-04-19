@@ -60,6 +60,8 @@ cargo build --release
 gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--proxy-base <url>] [--lang <en|zh>] [--no-color]
 ```
 
+直接运行 `gh-download` 且不带参数时，会按当前生效语言显示帮助信息。
+
 下载单个文件：
 
 ```bash
