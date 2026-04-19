@@ -1,11 +1,12 @@
-use std::fs::{self, File};
-use std::io::{self, Read};
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+mod models;
+mod paths;
+mod raw;
+mod transport;
 
-use reqwest::blocking::{Client, Response};
-use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
-use serde::Deserialize;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use reqwest::blocking::Client;
 use serde_json::Value;
 
 use crate::cli::{PrefixProxyMode, ResolvedOptions};
@@ -13,9 +14,17 @@ use crate::error::AppError;
 use crate::i18n::Language;
 use crate::output::Output;
 
+use self::models::ContentItem;
+pub use self::paths::{
+    build_contents_api_url, choose_directory_target, format_remote_path, join_proxy_url,
+    normalize_repo_path, relative_item_path,
+};
+use self::paths::{choose_file_target, file_name_from_remote_path, redact_url_for_display};
+use self::raw::{RawDownloadStrategy, should_attempt_prefix_proxy};
+use self::transport::{build_client, send_json_request, stream_download};
+
 pub const DEFAULT_GH_PROXY: &str = "https://gh-proxy.com/";
 pub const DEFAULT_GITHUB_API_BASE: &str = "https://api.github.com";
-const USER_AGENT_VALUE: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -42,35 +51,9 @@ pub struct RunOutcome {
     pub stats: DownloadStats,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-struct ContentItem {
-    name: Option<String>,
-    path: Option<String>,
-    #[serde(rename = "type")]
-    kind: Option<String>,
-    download_url: Option<String>,
-}
-
 pub struct Runner {
     config: RuntimeConfig,
     output: Output,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RawDownloadStrategy {
-    DirectUrl,
-    PrefixProxy,
-    RawApi,
-}
-
-impl RawDownloadStrategy {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::DirectUrl => "direct-url",
-            Self::PrefixProxy => "prefix-proxy",
-            Self::RawApi => "raw-api",
-        }
-    }
 }
 
 impl Runner {
@@ -272,17 +255,12 @@ impl Runner {
     }
 
     fn should_attempt_prefix_proxy(&self, options: &ResolvedOptions, error: &AppError) -> bool {
-        if options.token.is_some() || options.proxy_base.trim().is_empty() {
-            return false;
-        }
-
-        match error {
-            AppError::HttpStatus { status, .. } => {
-                matches!(*status, 403 | 429 | 500 | 502 | 503 | 504)
-            }
-            AppError::Request { .. } => true,
-            _ => false,
-        }
+        should_attempt_prefix_proxy(
+            options.prefix_mode,
+            options.token.is_some(),
+            &options.proxy_base,
+            error,
+        )
     }
 
     fn download_from_raw_url(
@@ -383,10 +361,7 @@ impl Runner {
         accept: Option<&str>,
         token: Option<&str>,
     ) -> Result<Value, AppError> {
-        let response = send_request(client, url, accept, token)?;
-        response
-            .json::<Value>()
-            .map_err(|err| AppError::Json(err.to_string()))
+        send_json_request(client, url, accept, token)
     }
 
     fn stream_download(
@@ -397,317 +372,18 @@ impl Runner {
         accept: Option<&str>,
         token: Option<&str>,
     ) -> Result<(), AppError> {
-        if let Some(parent) = local_target.parent() {
-            fs::create_dir_all(parent).map_err(|source| AppError::Io {
-                path: parent.to_path_buf(),
-                source,
-            })?;
-        }
-
-        let mut response = send_request(client, url, accept, token)?;
-        let mut file = File::create(local_target).map_err(|source| AppError::Io {
-            path: local_target.to_path_buf(),
-            source,
-        })?;
-        io::copy(&mut response, &mut file).map_err(|source| AppError::Io {
-            path: local_target.to_path_buf(),
-            source,
-        })?;
-        Ok(())
+        stream_download(client, url, local_target, accept, token)
     }
-}
-
-fn build_client() -> Result<Client, AppError> {
-    Client::builder()
-        .timeout(Duration::from_secs(120))
-        .connect_timeout(Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .no_proxy()
-        .build()
-        .map_err(|err| AppError::Request {
-            url: None,
-            message: err.to_string(),
-        })
-}
-
-fn send_request(
-    client: &Client,
-    url: &str,
-    accept: Option<&str>,
-    token: Option<&str>,
-) -> Result<Response, AppError> {
-    let mut request = client.get(url).header(USER_AGENT, USER_AGENT_VALUE);
-    if let Some(accept) = accept {
-        request = request.header(ACCEPT, accept);
-    }
-    if let Some(token) = token {
-        request = request.header(AUTHORIZATION, format!("Bearer {}", token));
-    }
-
-    let response = request.send().map_err(|err| AppError::Request {
-        url: Some(url.to_string()),
-        message: err.to_string(),
-    })?;
-
-    let status = response.status();
-    if status.is_success() {
-        return Ok(response);
-    }
-
-    let detail = extract_response_detail(response);
-    Err(AppError::HttpStatus {
-        status: status.as_u16(),
-        url: url.to_string(),
-        detail,
-    })
-}
-
-fn extract_response_detail(mut response: Response) -> Option<String> {
-    let mut body = String::new();
-    if response.read_to_string(&mut body).is_err() {
-        return None;
-    }
-    if body.trim().is_empty() {
-        return None;
-    }
-    if let Ok(value) = serde_json::from_str::<Value>(&body) {
-        return value
-            .get("message")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-            .or(Some(body));
-    }
-    Some(body)
-}
-
-pub fn normalize_repo_path(path: &str) -> String {
-    let normalized = path.trim();
-    if matches!(normalized, "" | "." | "/") {
-        String::new()
-    } else {
-        normalized.trim_matches('/').to_string()
-    }
-}
-
-pub fn quote_repo_path(path: &str) -> String {
-    normalize_repo_path(path)
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .map(urlencoding::encode)
-        .map(|segment| segment.into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-pub fn join_proxy_url(proxy_base: &str, target_url: &str) -> String {
-    format!("{}/{}", proxy_base.trim_end_matches('/'), target_url)
-}
-
-pub fn redact_url_for_display(url: &str) -> String {
-    let Some(scheme_separator) = url.find("://") else {
-        return url.to_string();
-    };
-
-    let scheme_end = scheme_separator + 3;
-    let authority_end = url[scheme_end..]
-        .find(['/', '?', '#'])
-        .map(|index| scheme_end + index)
-        .unwrap_or(url.len());
-    let authority = &url[scheme_end..authority_end];
-    let Some(user_info_end) = authority.find('@') else {
-        return url.to_string();
-    };
-
-    format!(
-        "{}***@{}",
-        &url[..scheme_end],
-        &url[scheme_end + user_info_end + 1..]
-    )
-}
-
-pub fn build_contents_api_url(
-    api_base: &str,
-    repo: &str,
-    remote_path: &str,
-    git_ref: Option<&str>,
-) -> String {
-    let quoted_path = quote_repo_path(remote_path);
-    let mut url = format!("{}/repos/{}/contents", api_base.trim_end_matches('/'), repo);
-    if !quoted_path.is_empty() {
-        url.push('/');
-        url.push_str(&quoted_path);
-    }
-    if let Some(git_ref) = git_ref.filter(|value| !value.trim().is_empty()) {
-        let separator = if url.contains('?') { '&' } else { '?' };
-        url.push(separator);
-        url.push_str("ref=");
-        url.push_str(&urlencoding::encode(git_ref));
-    }
-    url
-}
-
-pub fn format_remote_path(remote_path: &str) -> String {
-    let normalized = normalize_repo_path(remote_path);
-    if normalized.is_empty() {
-        "/".to_string()
-    } else {
-        normalized
-    }
-}
-
-pub fn relative_item_path(root_remote_path: &str, item_path: &str) -> String {
-    let normalized_root = normalize_repo_path(root_remote_path);
-    if normalized_root.is_empty() {
-        return item_path.to_string();
-    }
-
-    let prefix = format!("{}/", normalized_root);
-    item_path
-        .strip_prefix(&prefix)
-        .unwrap_or(item_path)
-        .to_string()
-}
-
-fn choose_file_target(local_target: &Path, remote_path: &str, item: &ContentItem) -> PathBuf {
-    let filename = item
-        .name
-        .clone()
-        .unwrap_or_else(|| file_name_from_remote_path(remote_path));
-    if local_target.exists() && local_target.is_dir() {
-        local_target.join(filename)
-    } else {
-        local_target.to_path_buf()
-    }
-}
-
-pub fn choose_directory_target(local_target: &Path, remote_path: &str) -> PathBuf {
-    let normalized_path = normalize_repo_path(remote_path);
-    let directory_name = Path::new(&normalized_path)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("");
-
-    if directory_name.is_empty() {
-        return local_target.to_path_buf();
-    }
-
-    if local_target
-        .file_name()
-        .and_then(|value| value.to_str())
-        .is_some_and(|name| name == directory_name)
-    {
-        local_target.to_path_buf()
-    } else {
-        local_target.join(directory_name)
-    }
-}
-
-fn file_name_from_remote_path(remote_path: &str) -> String {
-    Path::new(remote_path)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("downloaded-file")
-        .to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::net::TcpListener;
-    use std::process::Command;
 
     use mockito::{Matcher, Server};
     use tempfile::tempdir;
 
     use super::*;
-
-    #[test]
-    fn directory_target_reuses_existing_suffix() {
-        let local = PathBuf::from("/tmp/src");
-        assert_eq!(choose_directory_target(&local, "src"), local);
-    }
-
-    #[test]
-    fn directory_target_appends_directory_name() {
-        let local = PathBuf::from("/tmp/downloads");
-        assert_eq!(
-            choose_directory_target(&local, "src"),
-            PathBuf::from("/tmp/downloads/src")
-        );
-    }
-
-    #[test]
-    fn relative_item_path_strips_root_prefix() {
-        assert_eq!(
-            relative_item_path("src", "src/nested/lib.rs"),
-            "nested/lib.rs".to_string()
-        );
-    }
-
-    #[test]
-    fn user_agent_tracks_package_version() {
-        assert_eq!(
-            USER_AGENT_VALUE,
-            concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"))
-        );
-    }
-
-    #[test]
-    fn redacts_credentials_in_display_urls() {
-        assert_eq!(
-            redact_url_for_display("https://user:secret@example.com:8443/path"),
-            "https://***@example.com:8443/path"
-        );
-        assert_eq!(
-            redact_url_for_display("https://gh-proxy.com/https://api.github.com"),
-            "https://gh-proxy.com/https://api.github.com"
-        );
-    }
-
-    #[test]
-    fn build_client_ignores_http_proxy_environment() {
-        let status = Command::new(std::env::current_exe().expect("current test binary"))
-            .arg("download::tests::build_client_ignores_http_proxy_environment_subprocess")
-            .arg("--exact")
-            .arg("--nocapture")
-            .env("GH_DOWNLOAD_RUN_PROXY_SUBPROCESS", "1")
-            .status()
-            .expect("run proxy subprocess test");
-
-        assert!(status.success(), "proxy subprocess test should pass");
-    }
-
-    #[test]
-    fn build_client_ignores_http_proxy_environment_subprocess() {
-        if std::env::var("GH_DOWNLOAD_RUN_PROXY_SUBPROCESS").as_deref() != Ok("1") {
-            return;
-        }
-
-        let _env_snapshot = ProxyEnvSnapshot::capture();
-        clear_proxy_env();
-
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy listener");
-        let proxy_url = format!("http://{}", listener.local_addr().expect("listener addr"));
-        let target_url = "http://not-used.invalid/proxied";
-
-        set_env_var("HTTP_PROXY", Some(&proxy_url));
-
-        let client = build_client().expect("client should build");
-        let error = send_request(&client, target_url, None, None)
-            .expect_err("request should ignore HTTP_PROXY and fail to resolve target directly");
-
-        match error {
-            AppError::Request { message, .. } => {
-                assert!(
-                    !message.contains(&proxy_url),
-                    "request unexpectedly referenced configured proxy"
-                );
-            }
-            other => panic!("expected request error, got {other:?}"),
-        }
-
-        assert!(proxy_url.starts_with("http://127.0.0.1:"));
-    }
 
     #[test]
     fn downloads_single_file() {
@@ -977,53 +653,5 @@ mod tests {
             fs::read_to_string(outcome.saved_path).expect("readme"),
             "prefer raw body"
         );
-    }
-
-    fn clear_proxy_env() {
-        for key in proxy_env_keys() {
-            set_env_var(key, None);
-        }
-    }
-
-    fn proxy_env_keys() -> &'static [&'static str] {
-        &[
-            "HTTP_PROXY",
-            "http_proxy",
-            "HTTPS_PROXY",
-            "https_proxy",
-            "ALL_PROXY",
-            "all_proxy",
-            "NO_PROXY",
-            "no_proxy",
-        ]
-    }
-
-    fn set_env_var(key: &str, value: Option<&str>) {
-        match value {
-            Some(value) => unsafe { std::env::set_var(key, value) },
-            None => unsafe { std::env::remove_var(key) },
-        }
-    }
-
-    #[derive(Debug)]
-    struct ProxyEnvSnapshot(Vec<(&'static str, Option<String>)>);
-
-    impl ProxyEnvSnapshot {
-        fn capture() -> Self {
-            Self(
-                proxy_env_keys()
-                    .iter()
-                    .map(|key| (*key, std::env::var(key).ok()))
-                    .collect(),
-            )
-        }
-    }
-
-    impl Drop for ProxyEnvSnapshot {
-        fn drop(&mut self) {
-            for (key, value) in &self.0 {
-                set_env_var(key, value.as_deref());
-            }
-        }
     }
 }
