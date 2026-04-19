@@ -1,20 +1,27 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Project: gh-download
+  Type: single-binary Rust CLI for downloading a file or directory from a GitHub repository path.
+  Tech stack: Rust 2024, clap derive for CLI parsing, reqwest blocking + rustls for HTTP, serde for JSON, thiserror for error types.
+  User-facing behavior matters: help text, output wording, locale handling, and CLI argument behavior are part of the product contract.
+  This repo maintains both README.md and README.zh.md. When user-facing CLI behavior changes, update both if needed.
+  Main local validation commands:
+  - just fmt
+  - just test
+  - just check
+  OpenSpec guidance:
+  - CLI behavior, download semantics, locale behavior, and release workflow belong in openspec/specs/.
+  - Keep specs aligned with implemented behavior.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+rules:
+  proposal:
+    - Keep the proposal concise and explicit about which capability is added or modified.
+    - If the change affects CLI arguments, help text, errors, locale behavior, or release behavior, mention doc impact.
+  design:
+    - Create design.md only for cross-module behavior, release automation, or ambiguous behavior changes.
+    - Prefer small, explicit behavior changes over broad refactors.
+  tasks:
+    - Include implementation, tests, and docs when the change is user-facing.
+    - Add a verification task that runs cargo fmt and cargo test for Rust code changes.
+    - If release workflow behavior changes, include validation of workflow, packaging, and asset naming.

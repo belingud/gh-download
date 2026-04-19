@@ -153,6 +153,7 @@ pub fn parse_cli_from_env() -> Cli {
         env::var("LC_MESSAGES").ok().as_deref(),
         env::var("LANG").ok().as_deref(),
     );
+    let args = normalize_args_for_parsing(args);
     parse_cli_from_args(args, language)
 }
 
@@ -167,6 +168,13 @@ where
         .try_get_matches_from_mut(args_vec)
         .unwrap_or_else(|error| error.exit());
     Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit())
+}
+
+fn normalize_args_for_parsing(mut args: Vec<OsString>) -> Vec<OsString> {
+    if args.len() == 1 {
+        args.push(OsString::from("--help"));
+    }
+    args
 }
 
 pub fn command() -> clap::Command {
@@ -288,6 +296,7 @@ fn no_color_help(language: Language) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::error::ErrorKind;
 
     #[test]
     fn token_priority_prefers_explicit_then_github_then_gh() {
@@ -328,5 +337,46 @@ mod tests {
         let rendered = command.render_help().to_string();
         assert!(rendered.contains("用法:"));
         assert!(rendered.contains("显式指定用户可见语言"));
+    }
+
+    #[test]
+    fn empty_invocation_is_normalized_to_help() {
+        let args = normalize_args_for_parsing(vec![OsString::from("gh-download")]);
+
+        assert_eq!(
+            args,
+            vec![OsString::from("gh-download"), OsString::from("--help")]
+        );
+    }
+
+    #[test]
+    fn empty_invocation_uses_localized_help_flow() {
+        let args = normalize_args_for_parsing(vec![OsString::from("gh-download")]);
+        let mut command = command_for_language(Language::Zh);
+        let error = command
+            .try_get_matches_from_mut(args)
+            .expect_err("empty invocation should display help");
+
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        let rendered = error.to_string();
+        assert!(rendered.contains("用法:"));
+        assert!(rendered.contains("下载 GitHub 仓库里的单个文件或整个目录"));
+    }
+
+    #[test]
+    fn partial_invocation_still_requires_missing_arguments() {
+        let args = normalize_args_for_parsing(vec![
+            OsString::from("gh-download"),
+            OsString::from("owner/repo"),
+        ]);
+        let mut command = command_for_language(Language::En);
+        let error = command
+            .try_get_matches_from_mut(args)
+            .expect_err("partial invocation should still fail");
+
+        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
+        let rendered = error.to_string();
+        assert!(rendered.contains("<REMOTE_PATH>"));
+        assert!(rendered.contains("<LOCAL_TARGET>"));
     }
 }
