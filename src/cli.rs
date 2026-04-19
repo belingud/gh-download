@@ -10,11 +10,11 @@ use clap::FromArgMatches;
 use crate::i18n::{Language, detect_language_from_args_and_env};
 
 pub use self::help::{command, command_for_language};
+pub(crate) use self::resolve::debug_token_source_label;
 pub use self::resolve::{
     pick_token, resolve_cli, resolve_debug, resolve_local_target, resolve_prefix_mode,
     resolve_proxy_base,
 };
-pub(crate) use self::resolve::debug_token_source_label;
 pub use self::types::{Cli, PrefixProxyMode, ResolvedOptions};
 
 pub fn parse_cli_from_env() -> Cli {
