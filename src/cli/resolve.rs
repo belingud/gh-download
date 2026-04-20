@@ -51,6 +51,7 @@ pub fn resolve_cli(cli: Cli) -> Result<ResolvedOptions, AppError> {
         prefix_mode,
         concurrency: cli.concurrency,
         language,
+        overwrite: cli.overwrite,
         debug,
         no_color: cli.no_color,
     })
@@ -304,6 +305,7 @@ mod tests {
             prefix_mode: Some(PrefixProxyMode::Prefer),
             concurrency: 8,
             language: Some(Language::En),
+            overwrite: true,
             debug: false,
             no_color: true,
         };
@@ -311,6 +313,7 @@ mod tests {
         let options = resolve_cli(cli).expect("cli should resolve");
         assert_eq!(options.prefix_mode, PrefixProxyMode::Prefer);
         assert_eq!(options.proxy_base, DEFAULT_GH_PROXY);
+        assert!(options.overwrite);
     }
 
     #[test]
@@ -325,6 +328,7 @@ mod tests {
             prefix_mode: None,
             concurrency: 12,
             language: Some(Language::En),
+            overwrite: false,
             debug: false,
             no_color: true,
         };

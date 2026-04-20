@@ -1,6 +1,6 @@
 # gh-download
 
-[English](README.md)
+[English](README.md) | [路线图](ROADMAP.zh.md)
 
 `gh-download` 是一个命令行工具，用来从 GitHub 仓库中下载单个文件或整个目录。
 
@@ -15,6 +15,7 @@
 - 支持下载单个文件
 - 支持递归下载整个目录
 - 支持通过 `--concurrency` 或 `-c` 并发下载目录中的文件
+- 默认跳过本地已存在文件，并支持显式 `--overwrite`
 - 支持通过 `--ref` 指定分支、tag 或 commit
 - 支持私有仓库访问，可读取 `GITHUB_TOKEN` 或 `GH_TOKEN`
 - 支持 raw 文件下载的显式前缀代理模式
@@ -59,7 +60,7 @@ cargo build --release
 基本用法：
 
 ```bash
-gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--lang <en|zh>] [--debug] [--no-color]
+gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--lang <en|zh>] [--debug] [--no-color]
 ```
 
 直接运行 `gh-download` 且不带参数时，会按当前生效语言显示帮助信息。
@@ -88,6 +89,12 @@ gh-download owner/repo docs ./site-docs --ref main
 gh-download owner/repo src ./downloads -c 8
 ```
 
+显式覆盖本地已存在文件：
+
+```bash
+gh-download owner/repo src ./downloads --overwrite
+```
+
 下载私有仓库内容：
 
 ```bash
@@ -112,6 +119,7 @@ gh-download owner/repo docs ./docs --lang en
 - `--proxy-base`: raw 文件下载重试或 prefer 模式使用的 URL 前缀代理基址
 - `--prefix-mode`: raw 下载前缀代理模式，`direct`、`fallback` 或 `prefer`
 - `--concurrency`、`-c`: 目录下载时的最大并发文件数，最小为 `1`，默认值为 `4`
+- `--overwrite`: 覆盖本地已存在文件，而不是默认跳过
 - `--lang`: 显式指定输出语言，支持 `en` 和 `zh`
 - `--debug`: 打印请求 URL、token 来源和策略选择的调试信息
 - `--no-color`: 关闭 ANSI 彩色输出
@@ -148,6 +156,13 @@ gh-download owner/repo docs ./docs --lang en
 - 单文件下载也接受 `--concurrency` 和 `-c`，但最终仍只会下载一个解析出的文件目标
 - 并发目录下载会保持与当前版本相同的相对路径落盘结构，只是进度行出现顺序可能变化
 
+### 本地写入行为
+
+- 默认会跳过本地已存在文件，而不是隐式覆盖
+- 如果希望替换本地已存在文件，可显式传入 `--overwrite`
+- 这个规则同时适用于单文件下载和目录下载中的逐文件写入
+- 跳过判断只基于最终解析出的本地文件路径是否已存在，不会在该模式下比较文件内容
+
 ### Debug 行为
 
 - `--debug` 和 `GH_DOWNLOAD_DEBUG` 会开启流程级调试输出
@@ -180,7 +195,22 @@ gh-download owner/repo docs ./docs --lang en
 ⬇️ 下载：nested/mod.rs
 -------------------------------------
 ✅ 完成：owner/repo 的 src 已保存到 /tmp/downloads/src
-共下载 3 个文件，跳过 0 个条目
+共下载 3 个文件，跳过 0 个已存在文件，跳过 0 个不支持条目
+```
+
+跳过已存在文件的输出：
+
+```text
+-------------------------------------
+📦 仓库：owner/repo
+🌿 分支：默认分支
+📂 远端路径：README.md
+💾 本地路径：/tmp/README.md
+-------------------------------------
+⏭ 跳过已存在文件：README.md
+-------------------------------------
+✅ 完成：owner/repo 的 README.md 已保存到 /tmp/README.md
+共下载 0 个文件，跳过 1 个已存在文件，跳过 0 个不支持条目
 ```
 
 前缀代理输出：

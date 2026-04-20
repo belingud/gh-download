@@ -24,6 +24,7 @@ pub fn command_for_language(language: Language) -> clap::Command {
         .mut_arg("prefix_mode", |arg| arg.help(prefix_mode_help(language)))
         .mut_arg("concurrency", |arg| arg.help(concurrency_help(language)))
         .mut_arg("language", |arg| arg.help(language_help(language)))
+        .mut_arg("overwrite", |arg| arg.help(overwrite_help(language)))
         .mut_arg("debug", |arg| arg.help(debug_help(language)))
         .mut_arg("no_color", |arg| arg.help(no_color_help(language)));
 
@@ -40,10 +41,10 @@ fn command_about(language: Language) -> &'static str {
 fn command_after_help(language: Language) -> &'static str {
     match language {
         Language::En => {
-            "Examples:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh"
+            "Examples:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh"
         }
         Language::Zh => {
-            "示例:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh"
+            "示例:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh"
         }
     }
 }
@@ -127,6 +128,13 @@ fn language_help(language: Language) -> &'static str {
     }
 }
 
+fn overwrite_help(language: Language) -> &'static str {
+    match language {
+        Language::En => "Overwrite existing local files instead of skipping them",
+        Language::Zh => "覆盖本地已存在文件，而不是默认跳过",
+    }
+}
+
 fn concurrency_help(language: Language) -> &'static str {
     match language {
         Language::En => {
@@ -168,6 +176,7 @@ mod tests {
         assert!(rendered.contains("-c"));
         assert!(rendered.contains("显式指定用户可见语言"));
         assert!(rendered.contains("--concurrency"));
+        assert!(rendered.contains("--overwrite"));
     }
 
     #[test]

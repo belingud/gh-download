@@ -58,7 +58,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cli_parses_concurrency_no_color_ref_prefix_mode_and_debug() {
+    fn cli_parses_concurrency_overwrite_no_color_ref_prefix_mode_and_debug() {
         let cli = Cli::try_parse_from([
             "gh-download",
             "owner/repo",
@@ -72,6 +72,7 @@ mod tests {
             "8",
             "--lang",
             "zh",
+            "--overwrite",
             "--debug",
             "--no-color",
         ])
@@ -81,6 +82,7 @@ mod tests {
         assert_eq!(cli.prefix_mode, Some(PrefixProxyMode::Prefer));
         assert_eq!(cli.concurrency, 8);
         assert_eq!(cli.language, Some(Language::Zh));
+        assert!(cli.overwrite);
         assert!(cli.debug);
         assert!(cli.no_color);
     }
@@ -121,6 +123,7 @@ mod tests {
             .expect("cli should parse");
 
         assert_eq!(cli.concurrency, 4);
+        assert!(!cli.overwrite);
     }
 
     #[test]

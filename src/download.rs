@@ -43,6 +43,7 @@ impl Default for RuntimeConfig {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DownloadStats {
     pub files_downloaded: usize,
+    pub skipped_existing_files: usize,
     pub skipped_entries: usize,
 }
 
@@ -57,6 +58,12 @@ struct DownloadJob {
     item: ContentItem,
     local_target: PathBuf,
     shown_path: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SaveFileOutcome {
+    Downloaded,
+    SkippedExisting,
 }
 
 pub struct Runner {
@@ -78,6 +85,7 @@ impl Runner {
             &options.remote_path,
             &saved_path,
             stats.files_downloaded,
+            stats.skipped_existing_files,
             stats.skipped_entries,
         );
         Ok(RunOutcome { saved_path, stats })
@@ -107,8 +115,10 @@ impl Runner {
                 .name
                 .clone()
                 .unwrap_or_else(|| file_name_from_remote_path(&normalized_path));
-            self.save_file(client, options, &item, &final_target, &shown_path)?;
-            stats.files_downloaded += 1;
+            match self.save_file(client, options, &item, &final_target, &shown_path)? {
+                SaveFileOutcome::Downloaded => stats.files_downloaded += 1,
+                SaveFileOutcome::SkippedExisting => stats.skipped_existing_files += 1,
+            }
             return Ok(final_target);
         }
 
@@ -205,7 +215,12 @@ impl Runner {
         item: &ContentItem,
         local_target: &Path,
         shown_path: &str,
-    ) -> Result<(), AppError> {
+    ) -> Result<SaveFileOutcome, AppError> {
+        if !options.overwrite && local_target.is_file() {
+            self.output.skipping_existing(shown_path);
+            return Ok(SaveFileOutcome::SkippedExisting);
+        }
+
         let item_path = item
             .path
             .as_deref()
@@ -219,7 +234,7 @@ impl Runner {
                 .download_from_raw_url(client, options, local_target, download_url)
                 .is_ok()
             {
-                return Ok(());
+                return Ok(SaveFileOutcome::Downloaded);
             }
 
             self.output.warning(match options.language {
@@ -230,7 +245,7 @@ impl Runner {
 
         self.debug_log_strategy(options, RawDownloadStrategy::RawApi);
         self.stream_contents_api_file(client, options, item_path, local_target)?;
-        Ok(())
+        Ok(SaveFileOutcome::Downloaded)
     }
 
     fn build_directory_download_jobs(
@@ -261,7 +276,12 @@ impl Runner {
         jobs: Vec<DownloadJob>,
     ) -> Result<(), AppError> {
         let worker = |job| self.download_job(client, options, job);
-        stats.files_downloaded += run_bounded_work(&jobs, options.concurrency, &worker)?;
+        for outcome in run_bounded_work(&jobs, options.concurrency, &worker)? {
+            match outcome {
+                SaveFileOutcome::Downloaded => stats.files_downloaded += 1,
+                SaveFileOutcome::SkippedExisting => stats.skipped_existing_files += 1,
+            }
+        }
         Ok(())
     }
 
@@ -270,7 +290,7 @@ impl Runner {
         client: &Client,
         options: &ResolvedOptions,
         job: DownloadJob,
-    ) -> Result<(), AppError> {
+    ) -> Result<SaveFileOutcome, AppError> {
         self.save_file(
             client,
             options,
@@ -433,21 +453,23 @@ impl Runner {
     }
 }
 
-fn run_bounded_work<T, E, F>(items: &[T], concurrency: usize, worker: &F) -> Result<usize, E>
+fn run_bounded_work<T, R, E, F>(items: &[T], concurrency: usize, worker: &F) -> Result<Vec<R>, E>
 where
     T: Clone + Send,
+    R: Send,
     E: Send,
-    F: Fn(T) -> Result<(), E> + Sync,
+    F: Fn(T) -> Result<R, E> + Sync,
 {
     if items.is_empty() {
-        return Ok(0);
+        return Ok(Vec::new());
     }
 
     let concurrency = concurrency.max(1);
-    let mut completed = 0;
+    let mut results = Vec::with_capacity(items.len());
 
     for batch in items.chunks(concurrency) {
         let mut first_error = None;
+        let mut batch_results = Vec::with_capacity(batch.len());
 
         thread::scope(|scope| {
             let mut handles = Vec::with_capacity(batch.len());
@@ -457,7 +479,7 @@ where
 
             for handle in handles {
                 match handle.join().expect("worker thread panicked") {
-                    Ok(()) => completed += 1,
+                    Ok(result) => batch_results.push(result),
                     Err(error) => {
                         if first_error.is_none() {
                             first_error = Some(error);
@@ -470,9 +492,11 @@ where
         if let Some(error) = first_error {
             return Err(error);
         }
+
+        results.extend(batch_results);
     }
 
-    Ok(completed)
+    Ok(results)
 }
 
 #[cfg(test)]
@@ -520,6 +544,7 @@ mod tests {
             prefix_mode: PrefixProxyMode::Fallback,
             concurrency: 4,
             language: Language::En,
+            overwrite: false,
             debug: false,
             no_color: true,
         };
@@ -584,6 +609,7 @@ mod tests {
             prefix_mode: PrefixProxyMode::Fallback,
             concurrency: 4,
             language: Language::En,
+            overwrite: false,
             debug: false,
             no_color: true,
         };
@@ -628,6 +654,7 @@ mod tests {
             prefix_mode: PrefixProxyMode::Fallback,
             concurrency: 4,
             language: Language::En,
+            overwrite: false,
             debug: false,
             no_color: true,
         };
@@ -686,6 +713,7 @@ mod tests {
             prefix_mode: PrefixProxyMode::Fallback,
             concurrency: 4,
             language: Language::En,
+            overwrite: false,
             debug: false,
             no_color: true,
         };
@@ -745,6 +773,7 @@ mod tests {
             prefix_mode: PrefixProxyMode::Prefer,
             concurrency: 4,
             language: Language::En,
+            overwrite: false,
             debug: false,
             no_color: true,
         };
@@ -768,7 +797,7 @@ mod tests {
         let max_in_flight = Arc::new(AtomicUsize::new(0));
         let jobs: Vec<_> = (0..6).collect();
 
-        let completed = run_bounded_work(&jobs, 2, &|_| {
+        let results = run_bounded_work(&jobs, 2, &|_| {
             let current = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             max_in_flight.fetch_max(current, Ordering::SeqCst);
             thread::sleep(Duration::from_millis(20));
@@ -777,7 +806,7 @@ mod tests {
         })
         .expect("work should succeed");
 
-        assert_eq!(completed, 6);
+        assert_eq!(results.len(), 6);
         assert_eq!(max_in_flight.load(Ordering::SeqCst), 2);
     }
 
@@ -825,5 +854,260 @@ mod tests {
         assert_eq!(jobs[0].local_target, directory_target.join("main.rs"));
         assert_eq!(jobs[1].shown_path, "nested/lib.rs");
         assert_eq!(jobs[1].local_target, directory_target.join("nested/lib.rs"));
+    }
+
+    #[test]
+    fn skips_existing_direct_file_by_default() {
+        let mut server = Server::new();
+        let download_url = format!("{}/downloads/README.md", server.url());
+
+        let _metadata = server
+            .mock("GET", "/repos/owner/repo/contents/README.md")
+            .match_header("accept", "application/vnd.github+json")
+            .with_status(200)
+            .with_body(format!(
+                r#"{{"name":"README.md","path":"README.md","type":"file","download_url":"{}"}}"#,
+                download_url
+            ))
+            .create();
+
+        let download = server
+            .mock("GET", "/downloads/README.md")
+            .expect(0)
+            .with_status(200)
+            .with_body("new body")
+            .create();
+
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("README.md");
+        fs::write(&target, "keep existing").expect("seed existing file");
+
+        let options = ResolvedOptions {
+            repo: "owner/repo".to_string(),
+            remote_path: "README.md".to_string(),
+            local_target: target.clone(),
+            git_ref: None,
+            token: None,
+            proxy_base: DEFAULT_GH_PROXY.to_string(),
+            prefix_mode: PrefixProxyMode::Fallback,
+            concurrency: 4,
+            language: Language::En,
+            overwrite: false,
+            debug: false,
+            no_color: true,
+        };
+        let runner = Runner::new(
+            RuntimeConfig {
+                api_base: server.url(),
+            },
+            Output::new(false, Language::En),
+        );
+
+        let outcome = runner.run(&options).expect("download should succeed");
+        download.assert();
+        assert_eq!(outcome.saved_path, target);
+        assert_eq!(outcome.stats.files_downloaded, 0);
+        assert_eq!(outcome.stats.skipped_existing_files, 1);
+        assert_eq!(
+            fs::read_to_string(outcome.saved_path).expect("existing file"),
+            "keep existing"
+        );
+    }
+
+    #[test]
+    fn overwrites_existing_direct_file_when_enabled() {
+        let mut server = Server::new();
+        let download_url = format!("{}/downloads/README.md", server.url());
+
+        let _metadata = server
+            .mock("GET", "/repos/owner/repo/contents/README.md")
+            .match_header("accept", "application/vnd.github+json")
+            .with_status(200)
+            .with_body(format!(
+                r#"{{"name":"README.md","path":"README.md","type":"file","download_url":"{}"}}"#,
+                download_url
+            ))
+            .create();
+
+        let download = server
+            .mock("GET", "/downloads/README.md")
+            .expect(1)
+            .with_status(200)
+            .with_body("new body")
+            .create();
+
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("README.md");
+        fs::write(&target, "keep existing").expect("seed existing file");
+
+        let options = ResolvedOptions {
+            repo: "owner/repo".to_string(),
+            remote_path: "README.md".to_string(),
+            local_target: target.clone(),
+            git_ref: None,
+            token: None,
+            proxy_base: DEFAULT_GH_PROXY.to_string(),
+            prefix_mode: PrefixProxyMode::Fallback,
+            concurrency: 4,
+            language: Language::En,
+            overwrite: true,
+            debug: false,
+            no_color: true,
+        };
+        let runner = Runner::new(
+            RuntimeConfig {
+                api_base: server.url(),
+            },
+            Output::new(false, Language::En),
+        );
+
+        let outcome = runner.run(&options).expect("download should succeed");
+        download.assert();
+        assert_eq!(outcome.stats.files_downloaded, 1);
+        assert_eq!(outcome.stats.skipped_existing_files, 0);
+        assert_eq!(
+            fs::read_to_string(outcome.saved_path).expect("overwritten file"),
+            "new body"
+        );
+    }
+
+    #[test]
+    fn skips_existing_directory_files_by_default() {
+        let mut server = Server::new();
+        let existing_url = format!("{}/raw/src/existing.rs", server.url());
+        let new_url = format!("{}/raw/src/new.rs", server.url());
+
+        let _listing = server
+            .mock("GET", "/repos/owner/repo/contents/src")
+            .match_header("accept", "application/vnd.github+json")
+            .with_status(200)
+            .with_body(format!(
+                r#"[{{"name":"existing.rs","path":"src/existing.rs","type":"file","download_url":"{}"}},{{"name":"new.rs","path":"src/new.rs","type":"file","download_url":"{}"}}]"#,
+                existing_url, new_url
+            ))
+            .create();
+
+        let existing_download = server
+            .mock("GET", "/raw/src/existing.rs")
+            .expect(0)
+            .with_status(200)
+            .with_body("should not be downloaded")
+            .create();
+
+        let new_download = server
+            .mock("GET", "/raw/src/new.rs")
+            .expect(1)
+            .with_status(200)
+            .with_body("pub fn fresh() {}")
+            .create();
+
+        let dir = tempdir().expect("tempdir");
+        let directory_target = dir.path().join("downloads/src");
+        fs::create_dir_all(&directory_target).expect("create target dir");
+        fs::write(directory_target.join("existing.rs"), "keep existing")
+            .expect("seed existing file");
+
+        let options = ResolvedOptions {
+            repo: "owner/repo".to_string(),
+            remote_path: "src".to_string(),
+            local_target: dir.path().join("downloads"),
+            git_ref: None,
+            token: None,
+            proxy_base: DEFAULT_GH_PROXY.to_string(),
+            prefix_mode: PrefixProxyMode::Fallback,
+            concurrency: 4,
+            language: Language::En,
+            overwrite: false,
+            debug: false,
+            no_color: true,
+        };
+        let runner = Runner::new(
+            RuntimeConfig {
+                api_base: server.url(),
+            },
+            Output::new(false, Language::En),
+        );
+
+        let outcome = runner.run(&options).expect("download should succeed");
+        existing_download.assert();
+        new_download.assert();
+        assert_eq!(outcome.stats.files_downloaded, 1);
+        assert_eq!(outcome.stats.skipped_existing_files, 1);
+        assert_eq!(
+            fs::read_to_string(outcome.saved_path.join("existing.rs")).expect("existing"),
+            "keep existing"
+        );
+        assert_eq!(
+            fs::read_to_string(outcome.saved_path.join("new.rs")).expect("new"),
+            "pub fn fresh() {}"
+        );
+    }
+
+    #[test]
+    fn overwrites_existing_directory_files_when_enabled() {
+        let mut server = Server::new();
+        let existing_url = format!("{}/raw/src/existing.rs", server.url());
+        let new_url = format!("{}/raw/src/new.rs", server.url());
+
+        let _listing = server
+            .mock("GET", "/repos/owner/repo/contents/src")
+            .match_header("accept", "application/vnd.github+json")
+            .with_status(200)
+            .with_body(format!(
+                r#"[{{"name":"existing.rs","path":"src/existing.rs","type":"file","download_url":"{}"}},{{"name":"new.rs","path":"src/new.rs","type":"file","download_url":"{}"}}]"#,
+                existing_url, new_url
+            ))
+            .create();
+
+        let existing_download = server
+            .mock("GET", "/raw/src/existing.rs")
+            .expect(1)
+            .with_status(200)
+            .with_body("pub fn replaced() {}")
+            .create();
+
+        let new_download = server
+            .mock("GET", "/raw/src/new.rs")
+            .expect(1)
+            .with_status(200)
+            .with_body("pub fn fresh() {}")
+            .create();
+
+        let dir = tempdir().expect("tempdir");
+        let directory_target = dir.path().join("downloads/src");
+        fs::create_dir_all(&directory_target).expect("create target dir");
+        fs::write(directory_target.join("existing.rs"), "keep existing")
+            .expect("seed existing file");
+
+        let options = ResolvedOptions {
+            repo: "owner/repo".to_string(),
+            remote_path: "src".to_string(),
+            local_target: dir.path().join("downloads"),
+            git_ref: None,
+            token: None,
+            proxy_base: DEFAULT_GH_PROXY.to_string(),
+            prefix_mode: PrefixProxyMode::Fallback,
+            concurrency: 4,
+            language: Language::En,
+            overwrite: true,
+            debug: false,
+            no_color: true,
+        };
+        let runner = Runner::new(
+            RuntimeConfig {
+                api_base: server.url(),
+            },
+            Output::new(false, Language::En),
+        );
+
+        let outcome = runner.run(&options).expect("download should succeed");
+        existing_download.assert();
+        new_download.assert();
+        assert_eq!(outcome.stats.files_downloaded, 2);
+        assert_eq!(outcome.stats.skipped_existing_files, 0);
+        assert_eq!(
+            fs::read_to_string(outcome.saved_path.join("existing.rs")).expect("existing"),
+            "pub fn replaced() {}"
+        );
     }
 }

@@ -7,15 +7,15 @@ Define the core command-line contract and download behavior for fetching files o
 ## Requirements
 
 ### Requirement: CLI accepts GitHub path download inputs
-The `gh-download` CLI SHALL accept a repository identifier, a repository-relative remote path, and a local target path as positional arguments when a download invocation is provided. When the CLI is invoked without any user-provided arguments, it SHALL print the localized help text and exit successfully instead of reporting missing required positional arguments. The CLI SHALL also support `--ref`, `--token`, `--proxy-base`, `--prefix-mode`, `--concurrency`, `-c`, `--debug`, and `--lang` options, and it MUST use `GITHUB_TOKEN` or `GH_TOKEN` as the default token source when `--token` is not provided.
+The `gh-download` CLI SHALL accept a repository identifier, a repository-relative remote path, and a local target path as positional arguments when a download invocation is provided. When the CLI is invoked without any user-provided arguments, it SHALL print the localized help text and exit successfully instead of reporting missing required positional arguments. The CLI SHALL also support `--ref`, `--token`, `--proxy-base`, `--prefix-mode`, `--concurrency`, `-c`, `--overwrite`, `--debug`, and `--lang` options, and it MUST use `GITHUB_TOKEN` or `GH_TOKEN` as the default token source when `--token` is not provided.
 
 #### Scenario: User provides explicit CLI arguments
 - **WHEN** a user runs `gh-download owner/repo src ./downloads --ref main --token abc --proxy-base https://gh-proxy.com/ --lang en`
 - **THEN** the CLI accepts the invocation and uses the provided repository, remote path, local target, ref, token, proxy base, and language for the download operation
 
-#### Scenario: User provides explicit prefix mode, concurrency, and debug arguments
-- **WHEN** a user runs `gh-download owner/repo src ./downloads --prefix-mode prefer --concurrency 8 --debug`
-- **THEN** the CLI accepts the invocation and uses the provided prefix proxy mode, directory download concurrency, and debug flag for the download operation
+#### Scenario: User provides explicit prefix mode, concurrency, overwrite, and debug arguments
+- **WHEN** a user runs `gh-download owner/repo src ./downloads --prefix-mode prefer --concurrency 8 --overwrite --debug`
+- **THEN** the CLI accepts the invocation and uses the provided prefix proxy mode, directory download concurrency, overwrite mode, and debug flag for the download operation
 
 #### Scenario: User relies on environment token defaults
 - **WHEN** a user runs `gh-download owner/repo README.md ./README.md` with `GITHUB_TOKEN` or `GH_TOKEN` set
@@ -93,11 +93,15 @@ The CLI SHALL ignore ambient system proxy environment variables for its direct H
 - **THEN** the CLI does not send that credential through the proxy fallback path
 
 ### Requirement: CLI provides concise colored status output and actionable failure guidance
-The CLI SHALL print a structured startup summary with separators that includes the repository, ref selection, remote path, and local target. For directory downloads, it SHALL print the discovered file count with the remote directory and the created local directory before file progress. It SHALL print concise per-file download progress messages and a structured completion summary at the end of a successful operation. On failure, the CLI MUST present a short explanation plus at least one remediation suggestion for common categories including authentication, missing path or ref, network failure, and local filesystem write failure.
+The CLI SHALL print a structured startup summary with separators that includes the repository, ref selection, remote path, and local target. For directory downloads, it SHALL print the discovered file count with the remote directory and the created local directory before file progress. It SHALL print concise per-file download progress messages, including when an existing local file is skipped, and a structured completion summary at the end of a successful operation. On failure, the CLI MUST present a short explanation plus at least one remediation suggestion for common categories including authentication, missing path or ref, network failure, and local filesystem write failure.
 
 #### Scenario: Successful download reports progress and completion
 - **WHEN** a download completes successfully
 - **THEN** the CLI shows a readable progress trail and a final success summary that identifies the saved local path
+
+#### Scenario: Existing local file is skipped
+- **WHEN** the CLI skips writing a resolved local file because it already exists and overwrite mode is not enabled
+- **THEN** the progress output identifies that file as skipped rather than downloaded
 
 #### Scenario: Anonymous fallback proxy retry is used
 - **WHEN** the CLI retries an eligible anonymous raw file download through `--proxy-base`

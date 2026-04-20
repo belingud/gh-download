@@ -82,21 +82,30 @@ impl Output {
         self.print_stdout_line(&format!("{} {}", self.paint("32", "✔"), message));
     }
 
+    pub fn skipping_existing(&self, path: &str) {
+        self.print_stdout_line(&self.message_skipping_existing(path));
+    }
+
     pub fn completion(
         &self,
         repo: &str,
         remote_path: &str,
         saved_path: &Path,
         files_downloaded: usize,
+        skipped_existing_files: usize,
         skipped_entries: usize,
     ) {
         self.with_io_lock(|| {
             self.print_separator();
             println!("{}", self.message_completion(repo, remote_path, saved_path));
-            if files_downloaded > 1 || skipped_entries > 0 {
+            if files_downloaded > 1 || skipped_existing_files > 0 || skipped_entries > 0 {
                 println!(
                     "{}",
-                    self.message_download_stats(files_downloaded, skipped_entries)
+                    self.message_download_stats(
+                        files_downloaded,
+                        skipped_existing_files,
+                        skipped_entries,
+                    )
                 );
             }
         });
@@ -229,17 +238,30 @@ impl Output {
         }
     }
 
-    fn message_download_stats(&self, files_downloaded: usize, skipped_entries: usize) -> String {
+    fn message_download_stats(
+        &self,
+        files_downloaded: usize,
+        skipped_existing_files: usize,
+        skipped_entries: usize,
+    ) -> String {
         if self.language.is_chinese() {
             format!(
-                "共下载 {} 个文件，跳过 {} 个条目",
-                files_downloaded, skipped_entries
+                "共下载 {} 个文件，跳过 {} 个已存在文件，跳过 {} 个不支持条目",
+                files_downloaded, skipped_existing_files, skipped_entries
             )
         } else {
             format!(
-                "Downloaded {} files, skipped {} entries",
-                files_downloaded, skipped_entries
+                "Downloaded {} files, skipped {} existing files, skipped {} unsupported entries",
+                files_downloaded, skipped_existing_files, skipped_entries
             )
+        }
+    }
+
+    fn message_skipping_existing(&self, path: &str) -> String {
+        if self.language.is_chinese() {
+            format!("{} 跳过已存在文件：{}", self.paint("33", "⏭"), path)
+        } else {
+            format!("{} Skipping existing file: {}", self.paint("33", "⏭"), path)
         }
     }
 
@@ -295,6 +317,26 @@ mod tests {
                 Path::new("/tmp/baoyu-translate")
             ),
             "✅ 完成：jimliu/baoyu-skills 的 skills/baoyu-translate 已保存到 /tmp/baoyu-translate"
+        );
+    }
+
+    #[test]
+    fn english_download_stats_distinguish_existing_and_unsupported_skips() {
+        let output = Output::new(false, Language::En);
+
+        assert_eq!(
+            output.message_download_stats(3, 2, 1),
+            "Downloaded 3 files, skipped 2 existing files, skipped 1 unsupported entries"
+        );
+    }
+
+    #[test]
+    fn chinese_skip_existing_message_mentions_file_path() {
+        let output = Output::new(false, Language::Zh);
+
+        assert_eq!(
+            output.message_skipping_existing("README.md"),
+            "⏭ 跳过已存在文件：README.md"
         );
     }
 }

@@ -71,6 +71,9 @@ pub struct Cli {
     pub language: Option<Language>,
 
     #[arg(long, action = ArgAction::SetTrue)]
+    pub overwrite: bool,
+
+    #[arg(long, action = ArgAction::SetTrue)]
     pub debug: bool,
 
     #[arg(long, action = ArgAction::SetTrue)]
@@ -88,6 +91,7 @@ pub struct ResolvedOptions {
     pub prefix_mode: PrefixProxyMode,
     pub concurrency: usize,
     pub language: Language,
+    pub overwrite: bool,
     pub debug: bool,
     pub no_color: bool,
 }
