@@ -1,6 +1,6 @@
 # gh-download
 
-[English](README.md) | [路线图](ROADMAP.zh.md)
+[English](README.md)
 
 `gh-download` 是一个命令行工具，用来从 GitHub 仓库中下载单个文件或整个目录。
 

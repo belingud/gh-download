@@ -1,6 +1,6 @@
 # gh-download
 
-[简体中文](README.zh.md) | [Roadmap](ROADMAP.md)
+[简体中文](README.zh.md)
 
 `gh-download` is a command-line tool for downloading a single file or an entire directory from a GitHub repository.
 
