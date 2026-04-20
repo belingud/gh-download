@@ -19,6 +19,8 @@ It works well when you want to:
 - Choose a branch, tag, or commit with `--ref`
 - Access private repositories with `GITHUB_TOKEN` or `GH_TOKEN`
 - Support explicit prefix-proxy modes for raw file downloads
+- Support machine-readable final result output with `--json`
+- Support custom GitHub metadata API endpoints with `--api-base`
 - Support opt-in debug output for request URLs, token source, and strategy selection
 - Show friendly output with actionable error suggestions
 - Switch between English and Chinese automatically or explicitly
@@ -60,7 +62,7 @@ The compiled binary will be available at:
 Basic syntax:
 
 ```bash
-gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--lang <en|zh>] [--debug] [--no-color]
+gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--api-base <url>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--json] [--lang <en|zh>] [--debug] [--no-color]
 ```
 
 Run `gh-download` without arguments to show the help screen in the effective language.
@@ -95,6 +97,18 @@ Overwrite existing local files explicitly:
 gh-download owner/repo src ./downloads --overwrite
 ```
 
+Emit a machine-readable JSON result:
+
+```bash
+gh-download owner/repo README.md ./README.md --json
+```
+
+Download using a custom GitHub metadata API base:
+
+```bash
+gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3
+```
+
 Download from a private repository:
 
 ```bash
@@ -116,10 +130,12 @@ gh-download owner/repo docs ./docs --lang en
 - `<local-target>`: Local output path
 - `--ref`: Branch, tag, or commit SHA
 - `--token`: GitHub token
+- `--api-base`: GitHub metadata API base URL. Defaults to `https://api.github.com`
 - `--proxy-base`: URL-prefix proxy base used for anonymous raw file download retry or prefer mode
 - `--prefix-mode`: Raw download prefix-proxy mode, `direct`, `fallback`, or `prefer`
 - `--concurrency`, `-c`: Maximum number of concurrent file downloads for directory transfers. Must be at least `1`; defaults to `4`
 - `--overwrite`: Replace existing local files instead of skipping them
+- `--json`: Emit one final machine-readable JSON result on stdout
 - `--lang`: Explicit output language, `en` or `zh`
 - `--debug`: Print debug diagnostics for request URLs, token source, and strategy selection
 - `--no-color`: Disable ANSI color output
@@ -140,6 +156,7 @@ gh-download owner/repo docs ./docs --lang en
 
 ### Prefix proxy behavior
 
+- `--api-base` changes only the GitHub metadata API base used for repository contents discovery
 - `--proxy-base` and `GH_PROXY_BASE` are used only for raw file download URLs, never for GitHub metadata API requests
 - `--prefix-mode direct` is the default behavior
 - `--prefix-mode fallback` retries a raw file download through the prefix proxy after a retryable direct-download failure, using the built-in `https://gh-proxy.com/` when no explicit proxy base is set
@@ -148,6 +165,13 @@ gh-download owner/repo docs ./docs --lang en
 - When a token is present, `gh-download` will not forward that credential to the public fallback proxy
 - When prefix retry is used, the warning output prints the full generated fallback URL with any embedded credentials redacted
 
+### Custom GitHub API base
+
+- `--api-base` is intended for GitHub Enterprise or compatible deployments that expose the GitHub contents API on a different base URL
+- The CLI uses this base only for metadata requests such as `/repos/<owner>/<repo>/contents/...`
+- Raw file download behavior, prefix-proxy mode, and token forwarding rules stay unchanged when `--api-base` is set
+- The debug `metadata-url` line reflects the effective custom API base so request routing is easy to verify
+
 ### Directory download concurrency
 
 - Directory downloads enumerate the remote tree first, then download files with up to `4` concurrent transfers by default
@@ -155,6 +179,7 @@ gh-download owner/repo docs ./docs --lang en
 - Use `--concurrency 1` or `-c 1` if you want an explicit sequential mode for troubleshooting or low-resource environments
 - Single-file downloads accept `--concurrency` and `-c`, but still download only one resolved file target
 - Concurrent directory downloads preserve the same relative-path layout on disk; only the order of progress lines may vary
+- The directory-start log reports the effective worker thread count used for that transfer
 
 ### Local write behavior
 
@@ -168,6 +193,20 @@ gh-download owner/repo docs ./docs --lang en
 - `--debug` and `GH_DOWNLOAD_DEBUG` enable flow-level diagnostics
 - Debug output includes the generated GitHub metadata URL, the detected token source label, the resolved raw download URL, the generated prefix URL when applicable, and the selected raw download strategy
 - Debug output is written to `stderr` and does not change download behavior
+
+### JSON output
+
+- `--json` switches stdout to one final machine-readable JSON document instead of the default human-readable startup, progress, completion, or error text
+- JSON success output includes `success`, `saved_path`, and aggregate download statistics
+- JSON failure output includes `success`, `title`, `reason`, and `suggestions` under an `error` object
+- JSON field names are stable English identifiers even when the message text follows the effective language
+- If `--json` and `--debug` are enabled together, JSON stays on stdout and debug diagnostics stay on stderr
+
+### CI and releases
+
+- `.github/workflows/ci.yml` runs the standard `just check` validation for normal `push` and `pull_request` activity
+- `.github/workflows/release.yml` remains tag-driven and is still responsible for packaging and publishing release assets
+- Regular CI does not build archives or publish GitHub Releases
 
 Recommended setup:
 
@@ -187,7 +226,7 @@ Success output:
 📂 Remote Path:src
 💾 Local Path:/tmp/downloads
 -------------------------------------
-🔎 Found 3 files in directory: src
+🔎 Found 3 files in directory: src using 3 threads
 📁 Created Local Directory:/tmp/downloads/src
 -------------------------------------
 ⬇️ Download:main.rs
@@ -236,6 +275,20 @@ Debug output:
 [debug] download-url: https://raw.githubusercontent.com/owner/repo/main/README.md
 [debug] prefix-url: https://gh-proxy.com/https://raw.githubusercontent.com/owner/repo/main/README.md
 [debug] raw-download-strategy: prefix-proxy
+```
+
+JSON output:
+
+```json
+{
+  "success": true,
+  "saved_path": "/tmp/README.md",
+  "stats": {
+    "files_downloaded": 1,
+    "skipped_existing_files": 0,
+    "skipped_unsupported_entries": 0
+  }
+}
 ```
 
 Error output:

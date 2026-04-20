@@ -53,6 +53,9 @@ pub struct Cli {
     pub token: Option<String>,
 
     #[arg(long, value_name = "URL")]
+    pub api_base: Option<String>,
+
+    #[arg(long, value_name = "URL")]
     pub proxy_base: Option<String>,
 
     #[arg(long = "prefix-mode", value_enum, value_name = "MODE")]
@@ -74,6 +77,9 @@ pub struct Cli {
     pub overwrite: bool,
 
     #[arg(long, action = ArgAction::SetTrue)]
+    pub json: bool,
+
+    #[arg(long, action = ArgAction::SetTrue)]
     pub debug: bool,
 
     #[arg(long, action = ArgAction::SetTrue)]
@@ -87,11 +93,13 @@ pub struct ResolvedOptions {
     pub local_target: PathBuf,
     pub git_ref: Option<String>,
     pub token: Option<String>,
+    pub api_base: String,
     pub proxy_base: String,
     pub prefix_mode: PrefixProxyMode,
     pub concurrency: usize,
     pub language: Language,
     pub overwrite: bool,
+    pub json: bool,
     pub debug: bool,
     pub no_color: bool,
 }

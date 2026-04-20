@@ -58,7 +58,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cli_parses_concurrency_overwrite_no_color_ref_prefix_mode_and_debug() {
+    fn cli_parses_concurrency_json_overwrite_no_color_ref_prefix_mode_and_debug() {
         let cli = Cli::try_parse_from([
             "gh-download",
             "owner/repo",
@@ -68,11 +68,14 @@ mod tests {
             "main",
             "--prefix-mode",
             "prefer",
+            "--api-base",
+            "https://ghe.example.com/api/v3",
             "-c",
             "8",
             "--lang",
             "zh",
             "--overwrite",
+            "--json",
             "--debug",
             "--no-color",
         ])
@@ -80,9 +83,14 @@ mod tests {
 
         assert_eq!(cli.git_ref.as_deref(), Some("main"));
         assert_eq!(cli.prefix_mode, Some(PrefixProxyMode::Prefer));
+        assert_eq!(
+            cli.api_base.as_deref(),
+            Some("https://ghe.example.com/api/v3")
+        );
         assert_eq!(cli.concurrency, 8);
         assert_eq!(cli.language, Some(Language::Zh));
         assert!(cli.overwrite);
+        assert!(cli.json);
         assert!(cli.debug);
         assert!(cli.no_color);
     }
@@ -124,6 +132,7 @@ mod tests {
 
         assert_eq!(cli.concurrency, 4);
         assert!(!cli.overwrite);
+        assert!(!cli.json);
     }
 
     #[test]

@@ -1,7 +1,9 @@
 use crate::cli::ResolvedOptions;
+use crate::download::DownloadStats;
 use crate::download::format_remote_path;
 use crate::error::UserFacingError;
 use crate::i18n::Language;
+use serde::Serialize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -9,6 +11,7 @@ use std::sync::{Arc, Mutex};
 pub struct Output {
     color: bool,
     language: Language,
+    json_mode: bool,
     io_lock: Arc<Mutex<()>>,
 }
 
@@ -17,11 +20,21 @@ impl Output {
         Self {
             color,
             language,
+            json_mode: false,
             io_lock: Arc::new(Mutex::new(())),
         }
     }
 
+    pub fn with_json_mode(mut self) -> Self {
+        self.json_mode = true;
+        self
+    }
+
     pub fn startup(&self, options: &ResolvedOptions) {
+        if self.json_mode {
+            return;
+        }
+
         self.with_io_lock(|| {
             self.print_separator();
             println!(
@@ -51,11 +64,19 @@ impl Output {
         });
     }
 
-    pub fn found_directory(&self, count: usize, remote_path: &str) {
-        self.print_stdout_line(&self.message_found_files(count, remote_path));
+    pub fn found_directory(&self, count: usize, remote_path: &str, worker_threads: usize) {
+        if self.json_mode {
+            return;
+        }
+
+        self.print_stdout_line(&self.message_found_files(count, remote_path, worker_threads));
     }
 
     pub fn created_directory(&self, path: &Path) {
+        if self.json_mode {
+            return;
+        }
+
         self.with_io_lock(|| {
             println!(
                 "{}{}",
@@ -67,6 +88,10 @@ impl Output {
     }
 
     pub fn downloading(&self, path: &str) {
+        if self.json_mode {
+            return;
+        }
+
         self.print_stdout_line(&format!(
             "{}{}",
             self.paint("34", self.label_downloading()),
@@ -75,14 +100,26 @@ impl Output {
     }
 
     pub fn warning(&self, message: &str) {
+        if self.json_mode {
+            return;
+        }
+
         self.print_stdout_line(&format!("{} {}", self.paint("33", "⚠"), message));
     }
 
     pub fn success(&self, message: &str) {
+        if self.json_mode {
+            return;
+        }
+
         self.print_stdout_line(&format!("{} {}", self.paint("32", "✔"), message));
     }
 
     pub fn skipping_existing(&self, path: &str) {
+        if self.json_mode {
+            return;
+        }
+
         self.print_stdout_line(&self.message_skipping_existing(path));
     }
 
@@ -95,6 +132,10 @@ impl Output {
         skipped_existing_files: usize,
         skipped_entries: usize,
     ) {
+        if self.json_mode {
+            return;
+        }
+
         self.with_io_lock(|| {
             self.print_separator();
             println!("{}", self.message_completion(repo, remote_path, saved_path));
@@ -112,6 +153,10 @@ impl Output {
     }
 
     pub fn print_user_error(&self, error: &UserFacingError) {
+        if self.json_mode {
+            return;
+        }
+
         self.with_io_lock(|| {
             eprintln!("{}", self.paint("31", &error.title));
             eprintln!("{} {}", self.reason_label(), error.reason);
@@ -126,6 +171,14 @@ impl Output {
 
     pub fn debug_line(&self, message: &str) {
         self.with_io_lock(|| eprintln!("{}", message));
+    }
+
+    pub fn print_json_success(&self, saved_path: &Path, stats: &DownloadStats) {
+        self.print_stdout_line(&self.render_json_success(saved_path, stats));
+    }
+
+    pub fn print_json_error(&self, error: &UserFacingError) {
+        self.print_stdout_line(&self.render_json_error(error));
     }
 
     fn label_repository(&self) -> &'static str {
@@ -200,20 +253,27 @@ impl Output {
         }
     }
 
-    fn message_found_files(&self, count: usize, remote_path: &str) -> String {
+    fn message_found_files(
+        &self,
+        count: usize,
+        remote_path: &str,
+        worker_threads: usize,
+    ) -> String {
         if self.language.is_chinese() {
             format!(
-                "{} 发现 {} 个文件，目录：{}",
+                "{} 发现 {} 个文件，目录：{}，使用 {} 个线程",
                 self.paint("33", "🔎"),
                 count,
-                format_remote_path(remote_path)
+                format_remote_path(remote_path),
+                worker_threads
             )
         } else {
             format!(
-                "{} Found {} files in directory: {}",
+                "{} Found {} files in directory: {} using {} threads",
                 self.paint("33", "🔎"),
                 count,
-                format_remote_path(remote_path)
+                format_remote_path(remote_path),
+                worker_threads
             )
         }
     }
@@ -265,6 +325,31 @@ impl Output {
         }
     }
 
+    fn render_json_success(&self, saved_path: &Path, stats: &DownloadStats) -> String {
+        serde_json::to_string_pretty(&JsonSuccessPayload {
+            success: true,
+            saved_path: saved_path.display().to_string(),
+            stats: JsonStats {
+                files_downloaded: stats.files_downloaded,
+                skipped_existing_files: stats.skipped_existing_files,
+                skipped_unsupported_entries: stats.skipped_entries,
+            },
+        })
+        .expect("json success payload")
+    }
+
+    fn render_json_error(&self, error: &UserFacingError) -> String {
+        serde_json::to_string_pretty(&JsonFailurePayload {
+            success: false,
+            error: JsonErrorPayload {
+                title: error.title.clone(),
+                reason: error.reason.clone(),
+                suggestions: error.suggestions.clone(),
+            },
+        })
+        .expect("json failure payload")
+    }
+
     fn print_separator(&self) {
         println!(
             "{}",
@@ -290,9 +375,40 @@ impl Output {
     }
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct JsonSuccessPayload {
+    success: bool,
+    saved_path: String,
+    stats: JsonStats,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct JsonStats {
+    files_downloaded: usize,
+    skipped_existing_files: usize,
+    skipped_unsupported_entries: usize,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct JsonFailurePayload {
+    success: bool,
+    error: JsonErrorPayload,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct JsonErrorPayload {
+    title: String,
+    reason: String,
+    suggestions: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::path::Path;
+    use std::process::Command;
+
+    use serde_json::Value;
 
     use super::*;
 
@@ -301,8 +417,18 @@ mod tests {
         let output = Output::new(false, Language::Zh);
 
         assert_eq!(
-            output.message_found_files(11, "skills/baoyu-translate"),
-            "🔎 发现 11 个文件，目录：skills/baoyu-translate"
+            output.message_found_files(11, "skills/baoyu-translate", 4),
+            "🔎 发现 11 个文件，目录：skills/baoyu-translate，使用 4 个线程"
+        );
+    }
+
+    #[test]
+    fn english_found_directory_mentions_count_remote_path_and_threads() {
+        let output = Output::new(false, Language::En);
+
+        assert_eq!(
+            output.message_found_files(3, "src", 3),
+            "🔎 Found 3 files in directory: src using 3 threads"
         );
     }
 
@@ -338,5 +464,123 @@ mod tests {
             output.message_skipping_existing("README.md"),
             "⏭ 跳过已存在文件：README.md"
         );
+    }
+
+    #[test]
+    fn json_success_payload_includes_saved_path_and_stats() {
+        let output = Output::new(false, Language::En).with_json_mode();
+        let stats = DownloadStats {
+            files_downloaded: 2,
+            skipped_existing_files: 1,
+            skipped_entries: 3,
+        };
+
+        let value: Value = serde_json::from_str(
+            &output.render_json_success(Path::new("/tmp/downloads/src"), &stats),
+        )
+        .expect("valid json");
+
+        assert_eq!(value["success"], true);
+        assert_eq!(value["saved_path"], "/tmp/downloads/src");
+        assert_eq!(value["stats"]["files_downloaded"], 2);
+        assert_eq!(value["stats"]["skipped_existing_files"], 1);
+        assert_eq!(value["stats"]["skipped_unsupported_entries"], 3);
+    }
+
+    #[test]
+    fn json_failure_payload_includes_classified_error_fields() {
+        let output = Output::new(false, Language::En).with_json_mode();
+        let error = UserFacingError {
+            title: "✖ Download failed".to_string(),
+            reason: "boom".to_string(),
+            suggestions: vec!["retry".to_string()],
+        };
+
+        let value: Value =
+            serde_json::from_str(&output.render_json_error(&error)).expect("valid json");
+
+        assert_eq!(value["success"], false);
+        assert_eq!(value["error"]["title"], "✖ Download failed");
+        assert_eq!(value["error"]["reason"], "boom");
+        assert_eq!(value["error"]["suggestions"][0], "retry");
+    }
+
+    #[test]
+    fn json_mode_keeps_debug_on_stderr_and_suppresses_human_stdout() {
+        let output = Command::new(std::env::current_exe().expect("current test binary"))
+            .arg("output::tests::json_mode_keeps_debug_on_stderr_and_suppresses_human_stdout_subprocess")
+            .arg("--exact")
+            .arg("--nocapture")
+            .env("GH_DOWNLOAD_JSON_DEBUG_SUBPROCESS", "1")
+            .output()
+            .expect("run json/debug subprocess test");
+
+        assert!(
+            output.status.success(),
+            "json/debug subprocess should pass: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let json = extract_json_document(&stdout).expect("stdout should contain json");
+        let value: Value = serde_json::from_str(json).expect("stdout json should parse");
+
+        assert_eq!(value["success"], true);
+        assert_eq!(value["saved_path"], "/tmp/output.json");
+        assert!(!stdout.contains("Repository:"));
+        assert!(!stdout.contains("Download:"));
+        assert!(!stdout.contains("[debug]"));
+        assert!(stderr.contains("[debug] token-source: GITHUB_TOKEN"));
+    }
+
+    #[test]
+    fn json_mode_keeps_debug_on_stderr_and_suppresses_human_stdout_subprocess() {
+        if env::var("GH_DOWNLOAD_JSON_DEBUG_SUBPROCESS").as_deref() != Ok("1") {
+            return;
+        }
+
+        let output = Output::new(false, Language::En).with_json_mode();
+        let options = ResolvedOptions {
+            repo: "owner/repo".to_string(),
+            remote_path: "README.md".to_string(),
+            local_target: Path::new("/tmp/output.json").to_path_buf(),
+            git_ref: None,
+            token: None,
+            api_base: crate::DEFAULT_GITHUB_API_BASE.to_string(),
+            proxy_base: String::new(),
+            prefix_mode: crate::PrefixProxyMode::Direct,
+            concurrency: 4,
+            language: Language::En,
+            overwrite: false,
+            json: true,
+            debug: true,
+            no_color: true,
+        };
+        let stats = DownloadStats {
+            files_downloaded: 1,
+            skipped_existing_files: 0,
+            skipped_entries: 0,
+        };
+
+        output.startup(&options);
+        output.downloading("README.md");
+        output.warning("this should be hidden");
+        output.debug_line("[debug] token-source: GITHUB_TOKEN");
+        output.completion(
+            &options.repo,
+            &options.remote_path,
+            &options.local_target,
+            stats.files_downloaded,
+            stats.skipped_existing_files,
+            stats.skipped_entries,
+        );
+        output.print_json_success(Path::new("/tmp/output.json"), &stats);
+    }
+
+    fn extract_json_document(text: &str) -> Option<&str> {
+        let start = text.find('{')?;
+        let end = text.rfind('}')?;
+        text.get(start..=end)
     }
 }

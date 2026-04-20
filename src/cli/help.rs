@@ -20,11 +20,13 @@ pub fn command_for_language(language: Language) -> clap::Command {
         .mut_arg("local_target", |arg| arg.help(local_target_help(language)))
         .mut_arg("git_ref", |arg| arg.help(ref_help(language)))
         .mut_arg("token", |arg| arg.help(token_help(language)))
+        .mut_arg("api_base", |arg| arg.help(api_base_help(language)))
         .mut_arg("proxy_base", |arg| arg.help(proxy_help(language)))
         .mut_arg("prefix_mode", |arg| arg.help(prefix_mode_help(language)))
         .mut_arg("concurrency", |arg| arg.help(concurrency_help(language)))
         .mut_arg("language", |arg| arg.help(language_help(language)))
         .mut_arg("overwrite", |arg| arg.help(overwrite_help(language)))
+        .mut_arg("json", |arg| arg.help(json_help(language)))
         .mut_arg("debug", |arg| arg.help(debug_help(language)))
         .mut_arg("no_color", |arg| arg.help(no_color_help(language)));
 
@@ -41,10 +43,10 @@ fn command_about(language: Language) -> &'static str {
 fn command_after_help(language: Language) -> &'static str {
     match language {
         Language::En => {
-            "Examples:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh"
+            "Examples:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo README.md ./README.md --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh"
         }
         Language::Zh => {
-            "示例:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh"
+            "示例:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo README.md ./README.md --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh"
         }
     }
 }
@@ -97,6 +99,13 @@ fn token_help(language: Language) -> &'static str {
     }
 }
 
+fn api_base_help(language: Language) -> &'static str {
+    match language {
+        Language::En => "GitHub metadata API base URL. Defaults to https://api.github.com",
+        Language::Zh => "GitHub metadata API 基础地址。默认值为 https://api.github.com",
+    }
+}
+
 fn proxy_help(language: Language) -> &'static str {
     match language {
         Language::En => {
@@ -132,6 +141,13 @@ fn overwrite_help(language: Language) -> &'static str {
     match language {
         Language::En => "Overwrite existing local files instead of skipping them",
         Language::Zh => "覆盖本地已存在文件，而不是默认跳过",
+    }
+}
+
+fn json_help(language: Language) -> &'static str {
+    match language {
+        Language::En => "Emit one final machine-readable JSON result on stdout",
+        Language::Zh => "在 stdout 输出一个最终的机器可读 JSON 结果",
     }
 }
 
@@ -176,7 +192,9 @@ mod tests {
         assert!(rendered.contains("-c"));
         assert!(rendered.contains("显式指定用户可见语言"));
         assert!(rendered.contains("--concurrency"));
+        assert!(rendered.contains("--api-base"));
         assert!(rendered.contains("--overwrite"));
+        assert!(rendered.contains("--json"));
     }
 
     #[test]

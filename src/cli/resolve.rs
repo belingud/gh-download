@@ -1,7 +1,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-use crate::download::DEFAULT_GH_PROXY;
+use crate::download::{DEFAULT_GH_PROXY, DEFAULT_GITHUB_API_BASE};
 use crate::error::AppError;
 use crate::i18n::Language;
 
@@ -28,6 +28,7 @@ pub fn resolve_cli(cli: Cli) -> Result<ResolvedOptions, AppError> {
         env::var("GH_PROXY_BASE").ok(),
         prefix_mode,
     );
+    let api_base = resolve_api_base(cli.api_base.as_deref());
     let token = pick_token(
         cli.token.as_deref(),
         env::var("GITHUB_TOKEN").ok().as_deref(),
@@ -47,11 +48,13 @@ pub fn resolve_cli(cli: Cli) -> Result<ResolvedOptions, AppError> {
         local_target,
         git_ref: cli.git_ref.map(|value| value.trim().to_string()),
         token,
+        api_base,
         proxy_base,
         prefix_mode,
         concurrency: cli.concurrency,
         language,
         overwrite: cli.overwrite,
+        json: cli.json,
         debug,
         no_color: cli.no_color,
     })
@@ -89,6 +92,14 @@ pub fn resolve_proxy_base(
                 PrefixProxyMode::Fallback | PrefixProxyMode::Prefer => DEFAULT_GH_PROXY.to_string(),
             }),
     }
+}
+
+pub fn resolve_api_base(explicit: Option<&str>) -> String {
+    explicit
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_GITHUB_API_BASE)
+        .to_string()
 }
 
 pub fn resolve_prefix_mode(
@@ -267,6 +278,19 @@ mod tests {
     }
 
     #[test]
+    fn api_base_defaults_to_public_github() {
+        assert_eq!(resolve_api_base(None), DEFAULT_GITHUB_API_BASE);
+    }
+
+    #[test]
+    fn api_base_uses_trimmed_explicit_value() {
+        assert_eq!(
+            resolve_api_base(Some(" https://ghe.example.com/api/v3/ ")),
+            "https://ghe.example.com/api/v3/"
+        );
+    }
+
+    #[test]
     fn prefix_mode_uses_env_when_present() {
         assert_eq!(
             resolve_prefix_mode(None, Some(" prefer ")),
@@ -301,11 +325,13 @@ mod tests {
             local_target: PathBuf::from("./README.md"),
             git_ref: None,
             token: None,
+            api_base: Some(" https://ghe.example.com/api/v3 ".to_string()),
             proxy_base: None,
             prefix_mode: Some(PrefixProxyMode::Prefer),
             concurrency: 8,
             language: Some(Language::En),
             overwrite: true,
+            json: true,
             debug: false,
             no_color: true,
         };
@@ -313,7 +339,9 @@ mod tests {
         let options = resolve_cli(cli).expect("cli should resolve");
         assert_eq!(options.prefix_mode, PrefixProxyMode::Prefer);
         assert_eq!(options.proxy_base, DEFAULT_GH_PROXY);
+        assert_eq!(options.api_base, "https://ghe.example.com/api/v3");
         assert!(options.overwrite);
+        assert!(options.json);
     }
 
     #[test]
@@ -324,11 +352,13 @@ mod tests {
             local_target: PathBuf::from("./downloads"),
             git_ref: None,
             token: None,
+            api_base: None,
             proxy_base: None,
             prefix_mode: None,
             concurrency: 12,
             language: Some(Language::En),
             overwrite: false,
+            json: false,
             debug: false,
             no_color: true,
         };

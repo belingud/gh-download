@@ -133,7 +133,10 @@ impl Runner {
                 &normalized_path,
                 Some(entries),
             )?;
-            self.output.found_directory(files.len(), &normalized_path);
+            let worker_threads =
+                effective_directory_worker_threads(files.len(), options.concurrency);
+            self.output
+                .found_directory(files.len(), &normalized_path, worker_threads);
             fs::create_dir_all(&directory_target).map_err(|source| AppError::Io {
                 path: directory_target.clone(),
                 source,
@@ -499,6 +502,10 @@ where
     Ok(results)
 }
 
+fn effective_directory_worker_threads(file_count: usize, concurrency: usize) -> usize {
+    file_count.min(concurrency.max(1))
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -540,11 +547,13 @@ mod tests {
             local_target: target.clone(),
             git_ref: None,
             token: None,
+            api_base: server.url(),
             proxy_base: DEFAULT_GH_PROXY.to_string(),
             prefix_mode: PrefixProxyMode::Fallback,
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            json: false,
             debug: false,
             no_color: true,
         };
@@ -605,11 +614,13 @@ mod tests {
             local_target: dir.path().join("downloads"),
             git_ref: None,
             token: None,
+            api_base: server.url(),
             proxy_base: DEFAULT_GH_PROXY.to_string(),
             prefix_mode: PrefixProxyMode::Fallback,
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            json: false,
             debug: false,
             no_color: true,
         };
@@ -650,11 +661,13 @@ mod tests {
             local_target: dir.path().join("README.md"),
             git_ref: None,
             token: None,
+            api_base: api_server.url(),
             proxy_base: DEFAULT_GH_PROXY.to_string(),
             prefix_mode: PrefixProxyMode::Fallback,
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            json: false,
             debug: false,
             no_color: true,
         };
@@ -709,11 +722,13 @@ mod tests {
             local_target: dir.path().join("README.md"),
             git_ref: None,
             token: None,
+            api_base: api_server.url(),
             proxy_base: proxy_server.url(),
             prefix_mode: PrefixProxyMode::Fallback,
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            json: false,
             debug: false,
             no_color: true,
         };
@@ -769,11 +784,13 @@ mod tests {
             local_target: dir.path().join("README.md"),
             git_ref: None,
             token: None,
+            api_base: api_server.url(),
             proxy_base: proxy_server.url(),
             prefix_mode: PrefixProxyMode::Prefer,
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            json: false,
             debug: false,
             no_color: true,
         };
@@ -824,6 +841,13 @@ mod tests {
         .expect_err("one failing job should fail the batch");
 
         assert!(matches!(error, AppError::InvalidPath(message) if message == "boom"));
+    }
+
+    #[test]
+    fn effective_directory_worker_threads_uses_file_count_and_configured_bound() {
+        assert_eq!(effective_directory_worker_threads(11, 4), 4);
+        assert_eq!(effective_directory_worker_threads(3, 8), 3);
+        assert_eq!(effective_directory_worker_threads(0, 4), 0);
     }
 
     #[test]
@@ -888,11 +912,13 @@ mod tests {
             local_target: target.clone(),
             git_ref: None,
             token: None,
+            api_base: server.url(),
             proxy_base: DEFAULT_GH_PROXY.to_string(),
             prefix_mode: PrefixProxyMode::Fallback,
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            json: false,
             debug: false,
             no_color: true,
         };
@@ -946,11 +972,13 @@ mod tests {
             local_target: target.clone(),
             git_ref: None,
             token: None,
+            api_base: server.url(),
             proxy_base: DEFAULT_GH_PROXY.to_string(),
             prefix_mode: PrefixProxyMode::Fallback,
             concurrency: 4,
             language: Language::En,
             overwrite: true,
+            json: false,
             debug: false,
             no_color: true,
         };
@@ -1013,11 +1041,13 @@ mod tests {
             local_target: dir.path().join("downloads"),
             git_ref: None,
             token: None,
+            api_base: server.url(),
             proxy_base: DEFAULT_GH_PROXY.to_string(),
             prefix_mode: PrefixProxyMode::Fallback,
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            json: false,
             debug: false,
             no_color: true,
         };
@@ -1085,11 +1115,13 @@ mod tests {
             local_target: dir.path().join("downloads"),
             git_ref: None,
             token: None,
+            api_base: server.url(),
             proxy_base: DEFAULT_GH_PROXY.to_string(),
             prefix_mode: PrefixProxyMode::Fallback,
             concurrency: 4,
             language: Language::En,
             overwrite: true,
+            json: false,
             debug: false,
             no_color: true,
         };
@@ -1109,5 +1141,61 @@ mod tests {
             fs::read_to_string(outcome.saved_path.join("existing.rs")).expect("existing"),
             "pub fn replaced() {}"
         );
+    }
+
+    #[test]
+    fn uses_custom_api_base_for_metadata_requests() {
+        let mut api_server = Server::new();
+        let mut raw_server = Server::new();
+
+        let download_url = format!("{}/raw/README.md", raw_server.url());
+
+        let _metadata = api_server
+            .mock(
+                "GET",
+                "/enterprise/api/v3/repos/owner/repo/contents/README.md",
+            )
+            .match_header("accept", "application/vnd.github+json")
+            .with_status(200)
+            .with_body(format!(
+                r#"{{"name":"README.md","path":"README.md","type":"file","download_url":"{}"}}"#,
+                download_url
+            ))
+            .create();
+
+        let _download = raw_server
+            .mock("GET", "/raw/README.md")
+            .with_status(200)
+            .with_body("enterprise body")
+            .create();
+
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("README.md");
+        let options = ResolvedOptions {
+            repo: "owner/repo".to_string(),
+            remote_path: "README.md".to_string(),
+            local_target: target.clone(),
+            git_ref: None,
+            token: None,
+            api_base: format!("{}/enterprise/api/v3/", api_server.url()),
+            proxy_base: DEFAULT_GH_PROXY.to_string(),
+            prefix_mode: PrefixProxyMode::Direct,
+            concurrency: 4,
+            language: Language::En,
+            overwrite: false,
+            json: false,
+            debug: false,
+            no_color: true,
+        };
+        let runner = Runner::new(
+            RuntimeConfig {
+                api_base: options.api_base.clone(),
+            },
+            Output::new(false, Language::En),
+        );
+
+        let outcome = runner.run(&options).expect("download should succeed");
+        assert_eq!(outcome.saved_path, target);
+        assert_eq!(fs::read_to_string(target).expect("file"), "enterprise body");
     }
 }

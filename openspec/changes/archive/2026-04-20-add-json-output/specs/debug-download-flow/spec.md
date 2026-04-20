@@ -1,10 +1,4 @@
-# Capability: debug-download-flow
-
-## Purpose
-
-Define the opt-in debug diagnostics for request construction and raw download strategy selection.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: CLI supports explicit debug output for download flow diagnostics
 The CLI SHALL support an explicit debug mode that prints detailed download-flow diagnostics only when enabled by CLI argument or environment variable. The debug output MUST be disabled by default and MUST NOT alter the normal download strategy on its own. When JSON output mode is enabled at the same time, debug diagnostics SHALL continue to be emitted on stderr so the JSON payload on stdout remains machine-readable.

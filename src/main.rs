@@ -3,6 +3,7 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let cli = gh_download::parse_cli_from_env();
     let no_color = cli.no_color;
+    let json = cli.json;
     let language = gh_download::Language::detect(
         cli.language,
         std::env::var("LC_ALL").ok().as_deref(),
@@ -16,9 +17,17 @@ fn main() -> ExitCode {
     match gh_download::run_cli(cli) {
         Ok(_) => ExitCode::SUCCESS,
         Err(error) => {
-            let output = gh_download::Output::new(!no_color, language);
+            let output = if json {
+                gh_download::Output::new(!no_color, language).with_json_mode()
+            } else {
+                gh_download::Output::new(!no_color, language)
+            };
             let user_error = gh_download::classify_error(&error, token_present, language);
-            output.print_user_error(&user_error);
+            if json {
+                output.print_json_error(&user_error);
+            } else {
+                output.print_user_error(&user_error);
+            }
             ExitCode::from(1)
         }
     }

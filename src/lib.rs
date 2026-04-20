@@ -27,11 +27,24 @@ pub fn run_cli(cli: Cli) -> Result<RunOutcome, AppError> {
         gh_token.as_deref(),
     );
     let options = resolve_cli(cli)?;
-    let output = Output::new(!options.no_color, options.language);
+    let output = if options.json {
+        Output::new(!options.no_color, options.language).with_json_mode()
+    } else {
+        Output::new(!options.no_color, options.language)
+    };
     output.startup(&options);
     if options.debug {
-        eprintln!("[debug] token-source: {}", token_source);
+        output.debug_line(&format!("[debug] token-source: {}", token_source));
     }
-    let runner = Runner::new(RuntimeConfig::default(), output);
-    runner.run(&options)
+    let runner = Runner::new(
+        RuntimeConfig {
+            api_base: options.api_base.clone(),
+        },
+        output.clone(),
+    );
+    let outcome = runner.run(&options)?;
+    if options.json {
+        output.print_json_success(&outcome.saved_path, &outcome.stats);
+    }
+    Ok(outcome)
 }

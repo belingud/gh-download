@@ -19,6 +19,8 @@
 - 支持通过 `--ref` 指定分支、tag 或 commit
 - 支持私有仓库访问，可读取 `GITHUB_TOKEN` 或 `GH_TOKEN`
 - 支持 raw 文件下载的显式前缀代理模式
+- 支持通过 `--json` 输出机器可读的最终结果
+- 支持通过 `--api-base` 配置自定义 GitHub metadata API 端点
 - 支持按需开启的请求 URL、token 来源和策略调试输出
 - 输出友好，错误时会给出明确建议
 - 支持英文和中文输出，可按 locale 自动切换，也可显式指定
@@ -60,7 +62,7 @@ cargo build --release
 基本用法：
 
 ```bash
-gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--lang <en|zh>] [--debug] [--no-color]
+gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--api-base <url>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--json] [--lang <en|zh>] [--debug] [--no-color]
 ```
 
 直接运行 `gh-download` 且不带参数时，会按当前生效语言显示帮助信息。
@@ -95,6 +97,18 @@ gh-download owner/repo src ./downloads -c 8
 gh-download owner/repo src ./downloads --overwrite
 ```
 
+输出机器可读 JSON 结果：
+
+```bash
+gh-download owner/repo README.md ./README.md --json
+```
+
+使用自定义 GitHub metadata API base 下载：
+
+```bash
+gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3
+```
+
 下载私有仓库内容：
 
 ```bash
@@ -116,10 +130,12 @@ gh-download owner/repo docs ./docs --lang en
 - `<local-target>`: 本地输出路径
 - `--ref`: 分支、tag 或 commit SHA
 - `--token`: GitHub token
+- `--api-base`: GitHub metadata API 基础地址。默认值为 `https://api.github.com`
 - `--proxy-base`: raw 文件下载重试或 prefer 模式使用的 URL 前缀代理基址
 - `--prefix-mode`: raw 下载前缀代理模式，`direct`、`fallback` 或 `prefer`
 - `--concurrency`、`-c`: 目录下载时的最大并发文件数，最小为 `1`，默认值为 `4`
 - `--overwrite`: 覆盖本地已存在文件，而不是默认跳过
+- `--json`: 在 stdout 输出一个最终的机器可读 JSON 结果
 - `--lang`: 显式指定输出语言，支持 `en` 和 `zh`
 - `--debug`: 打印请求 URL、token 来源和策略选择的调试信息
 - `--no-color`: 关闭 ANSI 彩色输出
@@ -140,6 +156,7 @@ gh-download owner/repo docs ./docs --lang en
 
 ### 前缀代理行为
 
+- `--api-base` 只改变仓库内容探测使用的 GitHub metadata API base
 - `--proxy-base` 和 `GH_PROXY_BASE` 只用于 raw 文件下载 URL，不用于 GitHub metadata API 请求
 - 默认模式是 `--prefix-mode direct`
 - `--prefix-mode fallback` 会在直连 raw 文件下载出现可重试失败后再走前缀代理；如果未显式设置代理基址，则使用内置的 `https://gh-proxy.com/`
@@ -148,6 +165,13 @@ gh-download owner/repo docs ./docs --lang en
 - 当请求带有 token 时，`gh-download` 不会把该凭据转发到公共回退代理
 - 当前缀代理重试被触发时，警告输出会打印完整生成的回退 URL，并自动打码其中可能包含的凭据
 
+### 自定义 GitHub API base
+
+- `--api-base` 适用于 GitHub Enterprise 或兼容部署中暴露在不同基础地址上的 GitHub contents API
+- CLI 只会把这个 base 用于 `/repos/<owner>/<repo>/contents/...` 这类 metadata 请求
+- 即使设置了 `--api-base`，raw 文件下载行为、前缀代理模式和 token 转发规则也保持不变
+- debug 输出中的 `metadata-url` 会反映最终生效的自定义 API base，便于排查请求是否打到了预期端点
+
 ### 目录下载并发行为
 
 - 目录下载会先枚举远端目录树，再以默认最多 `4` 个并发传输下载文件
@@ -155,6 +179,7 @@ gh-download owner/repo docs ./docs --lang en
 - 如果需要显式顺序模式，便于排障或降低资源占用，可使用 `--concurrency 1` 或 `-c 1`
 - 单文件下载也接受 `--concurrency` 和 `-c`，但最终仍只会下载一个解析出的文件目标
 - 并发目录下载会保持与当前版本相同的相对路径落盘结构，只是进度行出现顺序可能变化
+- 目录下载开始时的日志会显示本次实际使用的线程数
 
 ### 本地写入行为
 
@@ -168,6 +193,20 @@ gh-download owner/repo docs ./docs --lang en
 - `--debug` 和 `GH_DOWNLOAD_DEBUG` 会开启流程级调试输出
 - 调试输出包含生成的 GitHub metadata URL、识别到的 token 来源标签、解析出的 raw 下载 URL、适用时生成的前缀代理 URL，以及当前选择的 raw 下载策略
 - 调试输出写到 `stderr`，不会改变下载行为
+
+### JSON 输出
+
+- `--json` 会把 stdout 切换成一个最终的机器可读 JSON 文档，而不是默认的人类可读启动、进度、完成或错误文本
+- JSON 成功结果包含 `success`、`saved_path` 和聚合下载统计信息
+- JSON 失败结果会在 `error` 对象下包含 `title`、`reason` 和 `suggestions`
+- 即使消息文本跟随当前生效语言，JSON 字段名也保持稳定的英文标识
+- 如果同时开启 `--json` 和 `--debug`，JSON 保持在 stdout，debug 诊断信息继续输出到 stderr
+
+### CI 与发布
+
+- `.github/workflows/ci.yml` 会在普通 `push` 和 `pull_request` 上执行标准 `just check` 校验
+- `.github/workflows/release.yml` 仍然只负责基于 tag 的打包与发布
+- 常规 CI 不会构建归档文件，也不会发布 GitHub Release
 
 推荐方式：
 
@@ -187,7 +226,7 @@ gh-download owner/repo docs ./docs --lang en
 📂 远端路径：src
 💾 本地路径：/tmp/downloads
 -------------------------------------
-🔎 发现 3 个文件，目录：src
+🔎 发现 3 个文件，目录：src，使用 3 个线程
 📁 创建本地目录：/tmp/downloads/src
 -------------------------------------
 ⬇️ 下载：main.rs
@@ -236,6 +275,20 @@ Debug 输出：
 [debug] download-url: https://raw.githubusercontent.com/owner/repo/main/README.md
 [debug] prefix-url: https://gh-proxy.com/https://raw.githubusercontent.com/owner/repo/main/README.md
 [debug] raw-download-strategy: prefix-proxy
+```
+
+JSON 输出：
+
+```json
+{
+  "success": true,
+  "saved_path": "/tmp/README.md",
+  "stats": {
+    "files_downloaded": 1,
+    "skipped_existing_files": 0,
+    "skipped_unsupported_entries": 0
+  }
+}
 ```
 
 错误输出：
