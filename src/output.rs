@@ -3,69 +3,83 @@ use crate::download::format_remote_path;
 use crate::error::UserFacingError;
 use crate::i18n::Language;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 pub struct Output {
     color: bool,
     language: Language,
+    io_lock: Arc<Mutex<()>>,
 }
 
 impl Output {
     pub fn new(color: bool, language: Language) -> Self {
-        Self { color, language }
+        Self {
+            color,
+            language,
+            io_lock: Arc::new(Mutex::new(())),
+        }
     }
 
     pub fn startup(&self, options: &ResolvedOptions) {
-        self.print_separator();
-        println!(
-            "{}{}",
-            self.paint("34", self.label_repository()),
-            options.repo
-        );
-        println!(
-            "{}{}",
-            self.paint("32", self.label_ref()),
-            options
-                .git_ref
-                .as_deref()
-                .unwrap_or(self.default_ref_label())
-        );
-        println!(
-            "{}{}",
-            self.paint("33", self.label_remote()),
-            format_remote_path(&options.remote_path)
-        );
-        println!(
-            "{}{}",
-            self.paint("35", self.label_local()),
-            options.local_target.display()
-        );
-        self.print_separator();
+        self.with_io_lock(|| {
+            self.print_separator();
+            println!(
+                "{}{}",
+                self.paint("34", self.label_repository()),
+                options.repo
+            );
+            println!(
+                "{}{}",
+                self.paint("32", self.label_ref()),
+                options
+                    .git_ref
+                    .as_deref()
+                    .unwrap_or(self.default_ref_label())
+            );
+            println!(
+                "{}{}",
+                self.paint("33", self.label_remote()),
+                format_remote_path(&options.remote_path)
+            );
+            println!(
+                "{}{}",
+                self.paint("35", self.label_local()),
+                options.local_target.display()
+            );
+            self.print_separator();
+        });
     }
 
     pub fn found_directory(&self, count: usize, remote_path: &str) {
-        println!("{}", self.message_found_files(count, remote_path));
+        self.print_stdout_line(&self.message_found_files(count, remote_path));
     }
 
     pub fn created_directory(&self, path: &Path) {
-        println!(
-            "{}{}",
-            self.paint("34", self.label_created_directory()),
-            path.display()
-        );
-        self.print_separator();
+        self.with_io_lock(|| {
+            println!(
+                "{}{}",
+                self.paint("34", self.label_created_directory()),
+                path.display()
+            );
+            self.print_separator();
+        });
     }
 
     pub fn downloading(&self, path: &str) {
-        println!("{}{}", self.paint("34", self.label_downloading()), path);
+        self.print_stdout_line(&format!(
+            "{}{}",
+            self.paint("34", self.label_downloading()),
+            path
+        ));
     }
 
     pub fn warning(&self, message: &str) {
-        println!("{} {}", self.paint("33", "⚠"), message);
+        self.print_stdout_line(&format!("{} {}", self.paint("33", "⚠"), message));
     }
 
     pub fn success(&self, message: &str) {
-        println!("{} {}", self.paint("32", "✔"), message);
+        self.print_stdout_line(&format!("{} {}", self.paint("32", "✔"), message));
     }
 
     pub fn completion(
@@ -76,25 +90,33 @@ impl Output {
         files_downloaded: usize,
         skipped_entries: usize,
     ) {
-        self.print_separator();
-        println!("{}", self.message_completion(repo, remote_path, saved_path));
-        if files_downloaded > 1 || skipped_entries > 0 {
-            println!(
-                "{}",
-                self.message_download_stats(files_downloaded, skipped_entries)
-            );
-        }
+        self.with_io_lock(|| {
+            self.print_separator();
+            println!("{}", self.message_completion(repo, remote_path, saved_path));
+            if files_downloaded > 1 || skipped_entries > 0 {
+                println!(
+                    "{}",
+                    self.message_download_stats(files_downloaded, skipped_entries)
+                );
+            }
+        });
     }
 
     pub fn print_user_error(&self, error: &UserFacingError) {
-        eprintln!("{}", self.paint("31", &error.title));
-        eprintln!("{} {}", self.reason_label(), error.reason);
-        if !error.suggestions.is_empty() {
-            eprintln!("{}", self.suggestions_label());
-            for suggestion in &error.suggestions {
-                eprintln!("- {}", suggestion);
+        self.with_io_lock(|| {
+            eprintln!("{}", self.paint("31", &error.title));
+            eprintln!("{} {}", self.reason_label(), error.reason);
+            if !error.suggestions.is_empty() {
+                eprintln!("{}", self.suggestions_label());
+                for suggestion in &error.suggestions {
+                    eprintln!("- {}", suggestion);
+                }
             }
-        }
+        });
+    }
+
+    pub fn debug_line(&self, message: &str) {
+        self.with_io_lock(|| eprintln!("{}", message));
     }
 
     fn label_repository(&self) -> &'static str {
@@ -226,6 +248,15 @@ impl Output {
             "{}",
             self.paint("90", "-------------------------------------")
         );
+    }
+
+    fn print_stdout_line(&self, message: &str) {
+        self.with_io_lock(|| println!("{}", message));
+    }
+
+    fn with_io_lock<T>(&self, action: impl FnOnce() -> T) -> T {
+        let _guard = self.io_lock.lock().expect("output lock");
+        action()
     }
 
     fn paint(&self, code: &str, text: &str) -> String {

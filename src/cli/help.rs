@@ -22,6 +22,7 @@ pub fn command_for_language(language: Language) -> clap::Command {
         .mut_arg("token", |arg| arg.help(token_help(language)))
         .mut_arg("proxy_base", |arg| arg.help(proxy_help(language)))
         .mut_arg("prefix_mode", |arg| arg.help(prefix_mode_help(language)))
+        .mut_arg("concurrency", |arg| arg.help(concurrency_help(language)))
         .mut_arg("language", |arg| arg.help(language_help(language)))
         .mut_arg("debug", |arg| arg.help(debug_help(language)))
         .mut_arg("no_color", |arg| arg.help(no_color_help(language)));
@@ -39,10 +40,10 @@ fn command_about(language: Language) -> &'static str {
 fn command_after_help(language: Language) -> &'static str {
     match language {
         Language::En => {
-            "Examples:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh"
+            "Examples:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh"
         }
         Language::Zh => {
-            "示例:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh"
+            "示例:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh"
         }
     }
 }
@@ -126,6 +127,15 @@ fn language_help(language: Language) -> &'static str {
     }
 }
 
+fn concurrency_help(language: Language) -> &'static str {
+    match language {
+        Language::En => {
+            "Maximum number of concurrent file downloads for directory transfers. Must be at least 1. Defaults to 4"
+        }
+        Language::Zh => "目录下载时的最大并发文件数，最小为 1，默认值为 4",
+    }
+}
+
 fn debug_help(language: Language) -> &'static str {
     match language {
         Language::En => {
@@ -155,7 +165,9 @@ mod tests {
         let mut command = command_for_language(Language::Zh);
         let rendered = command.render_help().to_string();
         assert!(rendered.contains("用法:"));
+        assert!(rendered.contains("-c"));
         assert!(rendered.contains("显式指定用户可见语言"));
+        assert!(rendered.contains("--concurrency"));
     }
 
     #[test]

@@ -5,6 +5,7 @@ mod transport;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::thread;
 
 use reqwest::blocking::Client;
 use serde_json::Value;
@@ -49,6 +50,13 @@ pub struct DownloadStats {
 pub struct RunOutcome {
     pub saved_path: PathBuf,
     pub stats: DownloadStats,
+}
+
+#[derive(Debug, Clone)]
+struct DownloadJob {
+    item: ContentItem,
+    local_target: PathBuf,
+    shown_path: String,
 }
 
 pub struct Runner {
@@ -99,7 +107,8 @@ impl Runner {
                 .name
                 .clone()
                 .unwrap_or_else(|| file_name_from_remote_path(&normalized_path));
-            self.save_file(client, options, stats, &item, &final_target, &shown_path)?;
+            self.save_file(client, options, &item, &final_target, &shown_path)?;
+            stats.files_downloaded += 1;
             return Ok(final_target);
         }
 
@@ -120,12 +129,9 @@ impl Runner {
                 source,
             })?;
             self.output.created_directory(&directory_target);
-            for item in files {
-                let item_path = item.path.clone().ok_or(AppError::MissingRepositoryPath)?;
-                let relative_part = relative_item_path(&normalized_path, &item_path);
-                let local_path = directory_target.join(&relative_part);
-                self.save_file(client, options, stats, &item, &local_path, &relative_part)?;
-            }
+            let jobs =
+                self.build_directory_download_jobs(&directory_target, &normalized_path, files)?;
+            self.download_directory_files(client, options, stats, jobs)?;
             return Ok(directory_target);
         }
 
@@ -196,7 +202,6 @@ impl Runner {
         &self,
         client: &Client,
         options: &ResolvedOptions,
-        stats: &mut DownloadStats,
         item: &ContentItem,
         local_target: &Path,
         shown_path: &str,
@@ -214,7 +219,6 @@ impl Runner {
                 .download_from_raw_url(client, options, local_target, download_url)
                 .is_ok()
             {
-                stats.files_downloaded += 1;
                 return Ok(());
             }
 
@@ -226,8 +230,54 @@ impl Runner {
 
         self.debug_log_strategy(options, RawDownloadStrategy::RawApi);
         self.stream_contents_api_file(client, options, item_path, local_target)?;
-        stats.files_downloaded += 1;
         Ok(())
+    }
+
+    fn build_directory_download_jobs(
+        &self,
+        directory_target: &Path,
+        remote_root: &str,
+        files: Vec<ContentItem>,
+    ) -> Result<Vec<DownloadJob>, AppError> {
+        files
+            .into_iter()
+            .map(|item| {
+                let item_path = item.path.clone().ok_or(AppError::MissingRepositoryPath)?;
+                let relative_part = relative_item_path(remote_root, &item_path);
+                Ok(DownloadJob {
+                    item,
+                    local_target: directory_target.join(&relative_part),
+                    shown_path: relative_part,
+                })
+            })
+            .collect()
+    }
+
+    fn download_directory_files(
+        &self,
+        client: &Client,
+        options: &ResolvedOptions,
+        stats: &mut DownloadStats,
+        jobs: Vec<DownloadJob>,
+    ) -> Result<(), AppError> {
+        let worker = |job| self.download_job(client, options, job);
+        stats.files_downloaded += run_bounded_work(&jobs, options.concurrency, &worker)?;
+        Ok(())
+    }
+
+    fn download_job(
+        &self,
+        client: &Client,
+        options: &ResolvedOptions,
+        job: DownloadJob,
+    ) -> Result<(), AppError> {
+        self.save_file(
+            client,
+            options,
+            &job.item,
+            &job.local_target,
+            &job.shown_path,
+        )
     }
 
     fn stream_contents_api_file(
@@ -329,7 +379,11 @@ impl Runner {
             return;
         }
 
-        eprintln!("[debug] {}: {}", label, redact_url_for_display(url));
+        self.output.debug_line(&format!(
+            "[debug] {}: {}",
+            label,
+            redact_url_for_display(url)
+        ));
     }
 
     fn debug_log_strategy(&self, options: &ResolvedOptions, strategy: RawDownloadStrategy) {
@@ -337,7 +391,10 @@ impl Runner {
             return;
         }
 
-        eprintln!("[debug] raw-download-strategy: {}", strategy.as_str());
+        self.output.debug_line(&format!(
+            "[debug] raw-download-strategy: {}",
+            strategy.as_str()
+        ));
     }
 
     fn get_json(
@@ -376,9 +433,54 @@ impl Runner {
     }
 }
 
+fn run_bounded_work<T, E, F>(items: &[T], concurrency: usize, worker: &F) -> Result<usize, E>
+where
+    T: Clone + Send,
+    E: Send,
+    F: Fn(T) -> Result<(), E> + Sync,
+{
+    if items.is_empty() {
+        return Ok(0);
+    }
+
+    let concurrency = concurrency.max(1);
+    let mut completed = 0;
+
+    for batch in items.chunks(concurrency) {
+        let mut first_error = None;
+
+        thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(batch.len());
+            for item in batch.iter().cloned() {
+                handles.push(scope.spawn(move || worker(item)));
+            }
+
+            for handle in handles {
+                match handle.join().expect("worker thread panicked") {
+                    Ok(()) => completed += 1,
+                    Err(error) => {
+                        if first_error.is_none() {
+                            first_error = Some(error);
+                        }
+                    }
+                }
+            }
+        });
+
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+    }
+
+    Ok(completed)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     use mockito::{Matcher, Server};
     use tempfile::tempdir;
@@ -416,6 +518,7 @@ mod tests {
             token: None,
             proxy_base: DEFAULT_GH_PROXY.to_string(),
             prefix_mode: PrefixProxyMode::Fallback,
+            concurrency: 4,
             language: Language::En,
             debug: false,
             no_color: true,
@@ -479,6 +582,7 @@ mod tests {
             token: None,
             proxy_base: DEFAULT_GH_PROXY.to_string(),
             prefix_mode: PrefixProxyMode::Fallback,
+            concurrency: 4,
             language: Language::En,
             debug: false,
             no_color: true,
@@ -522,6 +626,7 @@ mod tests {
             token: None,
             proxy_base: DEFAULT_GH_PROXY.to_string(),
             prefix_mode: PrefixProxyMode::Fallback,
+            concurrency: 4,
             language: Language::En,
             debug: false,
             no_color: true,
@@ -579,6 +684,7 @@ mod tests {
             token: None,
             proxy_base: proxy_server.url(),
             prefix_mode: PrefixProxyMode::Fallback,
+            concurrency: 4,
             language: Language::En,
             debug: false,
             no_color: true,
@@ -637,6 +743,7 @@ mod tests {
             token: None,
             proxy_base: proxy_server.url(),
             prefix_mode: PrefixProxyMode::Prefer,
+            concurrency: 4,
             language: Language::En,
             debug: false,
             no_color: true,
@@ -653,5 +760,70 @@ mod tests {
             fs::read_to_string(outcome.saved_path).expect("readme"),
             "prefer raw body"
         );
+    }
+
+    #[test]
+    fn bounded_work_uses_requested_concurrency() {
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let max_in_flight = Arc::new(AtomicUsize::new(0));
+        let jobs: Vec<_> = (0..6).collect();
+
+        let completed = run_bounded_work(&jobs, 2, &|_| {
+            let current = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            max_in_flight.fetch_max(current, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(20));
+            in_flight.fetch_sub(1, Ordering::SeqCst);
+            Ok::<(), AppError>(())
+        })
+        .expect("work should succeed");
+
+        assert_eq!(completed, 6);
+        assert_eq!(max_in_flight.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn bounded_work_returns_error_when_any_job_fails() {
+        let jobs: Vec<_> = (0..5).collect();
+
+        let error = run_bounded_work(&jobs, 3, &|job| {
+            if job == 3 {
+                Err(AppError::InvalidPath("boom".to_string()))
+            } else {
+                Ok(())
+            }
+        })
+        .expect_err("one failing job should fail the batch");
+
+        assert!(matches!(error, AppError::InvalidPath(message) if message == "boom"));
+    }
+
+    #[test]
+    fn build_directory_download_jobs_preserves_relative_paths() {
+        let runner = Runner::new(RuntimeConfig::default(), Output::new(false, Language::En));
+        let directory_target = Path::new("/tmp/downloads/src");
+        let files = vec![
+            ContentItem {
+                name: Some("main.rs".to_string()),
+                path: Some("src/main.rs".to_string()),
+                kind: Some("file".to_string()),
+                download_url: Some("https://example.invalid/main.rs".to_string()),
+            },
+            ContentItem {
+                name: Some("lib.rs".to_string()),
+                path: Some("src/nested/lib.rs".to_string()),
+                kind: Some("file".to_string()),
+                download_url: Some("https://example.invalid/nested/lib.rs".to_string()),
+            },
+        ];
+
+        let jobs = runner
+            .build_directory_download_jobs(directory_target, "src", files)
+            .expect("jobs should build");
+
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].shown_path, "main.rs");
+        assert_eq!(jobs[0].local_target, directory_target.join("main.rs"));
+        assert_eq!(jobs[1].shown_path, "nested/lib.rs");
+        assert_eq!(jobs[1].local_target, directory_target.join("nested/lib.rs"));
     }
 }

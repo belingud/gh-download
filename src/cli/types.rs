@@ -4,6 +4,18 @@ use clap::{ArgAction, Parser, ValueEnum};
 
 use crate::i18n::Language;
 
+pub const DEFAULT_DOWNLOAD_CONCURRENCY: usize = 4;
+
+fn parse_concurrency(value: &str) -> Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| "concurrency must be a positive integer".to_string())?;
+    if parsed == 0 {
+        return Err("concurrency must be at least 1".to_string());
+    }
+    Ok(parsed)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
 pub enum PrefixProxyMode {
     #[default]
@@ -46,6 +58,15 @@ pub struct Cli {
     #[arg(long = "prefix-mode", value_enum, value_name = "MODE")]
     pub prefix_mode: Option<PrefixProxyMode>,
 
+    #[arg(
+        short = 'c',
+        long,
+        value_name = "N",
+        default_value_t = DEFAULT_DOWNLOAD_CONCURRENCY,
+        value_parser = parse_concurrency
+    )]
+    pub concurrency: usize,
+
     #[arg(long = "lang", value_enum, value_name = "LANG")]
     pub language: Option<Language>,
 
@@ -65,6 +86,7 @@ pub struct ResolvedOptions {
     pub token: Option<String>,
     pub proxy_base: String,
     pub prefix_mode: PrefixProxyMode,
+    pub concurrency: usize,
     pub language: Language,
     pub debug: bool,
     pub no_color: bool,

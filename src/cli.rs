@@ -58,16 +58,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cli_parses_no_color_ref_prefix_mode_and_debug() {
+    fn cli_parses_concurrency_no_color_ref_prefix_mode_and_debug() {
         let cli = Cli::try_parse_from([
             "gh-download",
             "owner/repo",
-            "README.md",
-            "./README.md",
+            "src",
+            "./downloads",
             "--ref",
             "main",
             "--prefix-mode",
             "prefer",
+            "-c",
+            "8",
             "--lang",
             "zh",
             "--debug",
@@ -77,9 +79,48 @@ mod tests {
 
         assert_eq!(cli.git_ref.as_deref(), Some("main"));
         assert_eq!(cli.prefix_mode, Some(PrefixProxyMode::Prefer));
+        assert_eq!(cli.concurrency, 8);
         assert_eq!(cli.language, Some(Language::Zh));
         assert!(cli.debug);
         assert!(cli.no_color);
+    }
+
+    #[test]
+    fn cli_rejects_zero_concurrency() {
+        let error = Cli::try_parse_from([
+            "gh-download",
+            "owner/repo",
+            "src",
+            "./downloads",
+            "--concurrency",
+            "0",
+        ])
+        .expect_err("zero concurrency should be rejected");
+
+        assert!(error.to_string().contains("at least 1"));
+    }
+
+    #[test]
+    fn cli_accepts_long_concurrency_flag() {
+        let cli = Cli::try_parse_from([
+            "gh-download",
+            "owner/repo",
+            "src",
+            "./downloads",
+            "--concurrency",
+            "6",
+        ])
+        .expect("cli should parse");
+
+        assert_eq!(cli.concurrency, 6);
+    }
+
+    #[test]
+    fn cli_defaults_concurrency_to_four() {
+        let cli = Cli::try_parse_from(["gh-download", "owner/repo", "src", "./downloads"])
+            .expect("cli should parse");
+
+        assert_eq!(cli.concurrency, 4);
     }
 
     #[test]

@@ -14,6 +14,7 @@ It works well when you want to:
 
 - Download a single file
 - Download a directory recursively
+- Download directory files concurrently with `--concurrency` or `-c`
 - Choose a branch, tag, or commit with `--ref`
 - Access private repositories with `GITHUB_TOKEN` or `GH_TOKEN`
 - Support explicit prefix-proxy modes for raw file downloads
@@ -58,7 +59,7 @@ The compiled binary will be available at:
 Basic syntax:
 
 ```bash
-gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--lang <en|zh>] [--debug] [--no-color]
+gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--lang <en|zh>] [--debug] [--no-color]
 ```
 
 Run `gh-download` without arguments to show the help screen in the effective language.
@@ -79,6 +80,12 @@ Download a directory from a specific branch:
 
 ```bash
 gh-download owner/repo docs ./site-docs --ref main
+```
+
+Download a directory with higher concurrency:
+
+```bash
+gh-download owner/repo src ./downloads -c 8
 ```
 
 Download from a private repository:
@@ -104,6 +111,7 @@ gh-download owner/repo docs ./docs --lang en
 - `--token`: GitHub token
 - `--proxy-base`: URL-prefix proxy base used for anonymous raw file download retry or prefer mode
 - `--prefix-mode`: Raw download prefix-proxy mode, `direct`, `fallback`, or `prefer`
+- `--concurrency`, `-c`: Maximum number of concurrent file downloads for directory transfers. Must be at least `1`; defaults to `4`
 - `--lang`: Explicit output language, `en` or `zh`
 - `--debug`: Print debug diagnostics for request URLs, token source, and strategy selection
 - `--no-color`: Disable ANSI color output
@@ -131,6 +139,14 @@ gh-download owner/repo docs ./docs --lang en
 - GitHub metadata API requests are not sent through URL-prefix fallback proxies such as `gh-proxy`
 - When a token is present, `gh-download` will not forward that credential to the public fallback proxy
 - When prefix retry is used, the warning output prints the full generated fallback URL with any embedded credentials redacted
+
+### Directory download concurrency
+
+- Directory downloads enumerate the remote tree first, then download files with up to `4` concurrent transfers by default
+- Use `--concurrency <n>` or `-c <n>` to raise or lower the maximum number of in-flight file downloads for a directory transfer
+- Use `--concurrency 1` or `-c 1` if you want an explicit sequential mode for troubleshooting or low-resource environments
+- Single-file downloads accept `--concurrency` and `-c`, but still download only one resolved file target
+- Concurrent directory downloads preserve the same relative-path layout on disk; only the order of progress lines may vary
 
 ### Debug behavior
 

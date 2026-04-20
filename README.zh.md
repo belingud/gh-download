@@ -14,6 +14,7 @@
 
 - 支持下载单个文件
 - 支持递归下载整个目录
+- 支持通过 `--concurrency` 或 `-c` 并发下载目录中的文件
 - 支持通过 `--ref` 指定分支、tag 或 commit
 - 支持私有仓库访问，可读取 `GITHUB_TOKEN` 或 `GH_TOKEN`
 - 支持 raw 文件下载的显式前缀代理模式
@@ -58,7 +59,7 @@ cargo build --release
 基本用法：
 
 ```bash
-gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--lang <en|zh>] [--debug] [--no-color]
+gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--lang <en|zh>] [--debug] [--no-color]
 ```
 
 直接运行 `gh-download` 且不带参数时，会按当前生效语言显示帮助信息。
@@ -79,6 +80,12 @@ gh-download owner/repo src ./downloads
 
 ```bash
 gh-download owner/repo docs ./site-docs --ref main
+```
+
+以更高并发下载目录：
+
+```bash
+gh-download owner/repo src ./downloads -c 8
 ```
 
 下载私有仓库内容：
@@ -104,6 +111,7 @@ gh-download owner/repo docs ./docs --lang en
 - `--token`: GitHub token
 - `--proxy-base`: raw 文件下载重试或 prefer 模式使用的 URL 前缀代理基址
 - `--prefix-mode`: raw 下载前缀代理模式，`direct`、`fallback` 或 `prefer`
+- `--concurrency`、`-c`: 目录下载时的最大并发文件数，最小为 `1`，默认值为 `4`
 - `--lang`: 显式指定输出语言，支持 `en` 和 `zh`
 - `--debug`: 打印请求 URL、token 来源和策略选择的调试信息
 - `--no-color`: 关闭 ANSI 彩色输出
@@ -131,6 +139,14 @@ gh-download owner/repo docs ./docs --lang en
 - GitHub metadata API 请求不会发送到 `gh-proxy` 这类 URL 前缀式回退代理
 - 当请求带有 token 时，`gh-download` 不会把该凭据转发到公共回退代理
 - 当前缀代理重试被触发时，警告输出会打印完整生成的回退 URL，并自动打码其中可能包含的凭据
+
+### 目录下载并发行为
+
+- 目录下载会先枚举远端目录树，再以默认最多 `4` 个并发传输下载文件
+- 可通过 `--concurrency <n>` 或 `-c <n>` 提高或降低目录下载时同时进行的文件数
+- 如果需要显式顺序模式，便于排障或降低资源占用，可使用 `--concurrency 1` 或 `-c 1`
+- 单文件下载也接受 `--concurrency` 和 `-c`，但最终仍只会下载一个解析出的文件目标
+- 并发目录下载会保持与当前版本相同的相对路径落盘结构，只是进度行出现顺序可能变化
 
 ### Debug 行为
 

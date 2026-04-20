@@ -49,6 +49,7 @@ pub fn resolve_cli(cli: Cli) -> Result<ResolvedOptions, AppError> {
         token,
         proxy_base,
         prefix_mode,
+        concurrency: cli.concurrency,
         language,
         debug,
         no_color: cli.no_color,
@@ -301,6 +302,7 @@ mod tests {
             token: None,
             proxy_base: None,
             prefix_mode: Some(PrefixProxyMode::Prefer),
+            concurrency: 8,
             language: Some(Language::En),
             debug: false,
             no_color: true,
@@ -309,5 +311,25 @@ mod tests {
         let options = resolve_cli(cli).expect("cli should resolve");
         assert_eq!(options.prefix_mode, PrefixProxyMode::Prefer);
         assert_eq!(options.proxy_base, DEFAULT_GH_PROXY);
+    }
+
+    #[test]
+    fn resolve_cli_preserves_explicit_concurrency() {
+        let cli = Cli {
+            repo: "owner/repo".to_string(),
+            remote_path: "src".to_string(),
+            local_target: PathBuf::from("./downloads"),
+            git_ref: None,
+            token: None,
+            proxy_base: None,
+            prefix_mode: None,
+            concurrency: 12,
+            language: Some(Language::En),
+            debug: false,
+            no_color: true,
+        };
+
+        let options = resolve_cli(cli).expect("cli should resolve");
+        assert_eq!(options.concurrency, 12);
     }
 }
