@@ -1,5 +1,5 @@
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::download::{DEFAULT_GH_PROXY, DEFAULT_GITHUB_API_BASE};
 use crate::error::AppError;
@@ -118,11 +118,36 @@ pub fn resolve_debug(explicit: bool, env_value: Option<&str>) -> bool {
 pub fn resolve_local_target(path: &Path) -> Result<PathBuf, AppError> {
     let expanded = expand_home(path)?;
     if expanded.is_absolute() {
-        Ok(expanded)
+        Ok(normalize_path_lexically(&expanded))
     } else {
         env::current_dir()
             .map(|current| current.join(expanded))
+            .map(|joined| normalize_path_lexically(&joined))
             .map_err(|err| AppError::InvalidPath(err.to_string()))
+    }
+}
+
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::RootDir | Component::Prefix(_) | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+
+    if normalized.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        normalized
     }
 }
 
@@ -365,5 +390,23 @@ mod tests {
 
         let options = resolve_cli(cli).expect("cli should resolve");
         assert_eq!(options.concurrency, 12);
+    }
+
+    #[test]
+    fn local_target_is_lexically_normalized_for_relative_paths() {
+        let current_dir = env::current_dir().expect("current dir");
+
+        let resolved = resolve_local_target(Path::new("./var/./nested/../file.txt"))
+            .expect("local target should resolve");
+
+        assert_eq!(resolved, current_dir.join("var/file.txt"));
+    }
+
+    #[test]
+    fn local_target_is_lexically_normalized_for_absolute_paths() {
+        assert_eq!(
+            resolve_local_target(Path::new("/tmp/./gh-download/../target")).expect("absolute"),
+            PathBuf::from("/tmp/target")
+        );
     }
 }

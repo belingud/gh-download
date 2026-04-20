@@ -60,7 +60,7 @@ The CLI SHALL query GitHub metadata for the requested remote path before downloa
 - **THEN** the CLI sends its GitHub contents metadata requests to `https://ghe.example.com/api/v3` instead of `https://api.github.com`
 
 ### Requirement: CLI downloads files and directories with deterministic local path handling
-The CLI SHALL stream downloaded file bytes directly to disk instead of buffering the full payload in memory. For a remote file, the local target MUST support either a direct file path or an existing destination directory. For a remote directory, the CLI MUST recreate the remote directory name under the local target unless the local target already ends with the same directory name.
+The CLI SHALL stream downloaded file bytes directly to disk instead of buffering the full payload in memory. For a remote file, the local target MUST support either a direct file path or an existing destination directory. For a remote directory, the CLI MUST recreate the remote directory name under the local target unless the local target already ends with the same directory name. Before path resolution is displayed or joined with remote output names, the CLI SHALL lexically normalize local target paths so redundant `.` segments are removed without requiring the path to already exist on disk.
 
 #### Scenario: File target points to an existing directory
 - **WHEN** a user downloads a remote file and the local target already exists as a directory
@@ -69,6 +69,10 @@ The CLI SHALL stream downloaded file bytes directly to disk instead of buffering
 #### Scenario: Directory target would otherwise double-nest
 - **WHEN** a user downloads a remote directory and the local target already ends with the same directory name
 - **THEN** the CLI reuses the provided directory path instead of nesting the same name twice
+
+#### Scenario: Local target removes redundant current-directory segments
+- **WHEN** a user runs `gh-download owner/repo .github ./var`
+- **THEN** the CLI resolves and displays the local path as `<cwd>/var/.github` instead of preserving a redundant `./` segment inside the absolute path
 
 ### Requirement: CLI recursively downloads directory contents and preserves relative paths
 For directory downloads, the CLI SHALL recursively enumerate all nested files beneath the requested remote path and write them using paths relative to the requested directory root. After enumeration, the CLI SHALL download directory files using at most the configured directory download concurrency. The CLI MUST create parent directories as needed before writing files. The CLI MUST warn and skip unsupported entries such as non-file, non-directory content returned by GitHub metadata.
