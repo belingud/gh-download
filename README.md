@@ -17,6 +17,7 @@ It works well when you want to:
 - Download directory files concurrently with `--concurrency` or `-c`
 - Skip existing local files by default, with explicit `--overwrite` support
 - Choose a branch, tag, or commit with `--ref`
+- Persist common defaults in `~/.config/gh-download/config.toml` or an explicit `--config` file
 - Access private repositories with `GITHUB_TOKEN` or `GH_TOKEN`
 - Support explicit prefix-proxy modes for raw file downloads
 - Support machine-readable final result output with `--json`
@@ -62,7 +63,7 @@ The compiled binary will be available at:
 Basic syntax:
 
 ```bash
-gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--api-base <url>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--json] [--lang <en|zh>] [--debug] [--no-color]
+gh-download <repo> <remote-path> <local-target> [--config <path>] [--ref <ref>] [--token <token>] [--api-base <url>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--json] [--lang <en|zh>] [--debug] [--no-color]
 ```
 
 Run `gh-download` without arguments to show the help screen in the effective language.
@@ -121,6 +122,12 @@ Force English output:
 gh-download owner/repo docs ./docs --lang en
 ```
 
+Download with an explicit config file:
+
+```bash
+gh-download owner/repo docs ./docs --config ./gh-download.toml
+```
+
 ## Configuration
 
 ### Arguments
@@ -128,20 +135,44 @@ gh-download owner/repo docs ./docs --lang en
 - `<repo>`: GitHub repository, such as `openai/openai-python`
 - `<remote-path>`: Path inside the repository, such as `README.md` or `src/openai`
 - `<local-target>`: Local output path
+- `--config`: Read options from this TOML config file only. When omitted, `~/.config/gh-download/config.toml` is used if it exists
 - `--ref`: Branch, tag, or commit SHA
-- `--token`: GitHub token
-- `--api-base`: GitHub metadata API base URL. Defaults to `https://api.github.com`
-- `--proxy-base`: URL-prefix proxy base used for anonymous raw file download retry or prefer mode
-- `--prefix-mode`: Raw download prefix-proxy mode, `direct`, `fallback`, or `prefer`
-- `--concurrency`, `-c`: Maximum number of concurrent file downloads for directory transfers. Must be at least `1`; defaults to `4`
+- `--token`: GitHub token. Precedence: `--token`, config file, `GITHUB_TOKEN`, then `GH_TOKEN`
+- `--api-base`: GitHub metadata API base URL. Precedence: `--api-base`, config file, then `https://api.github.com`
+- `--proxy-base`: URL-prefix proxy base for anonymous raw file downloads. Precedence: CLI, config file, then `GH_PROXY_BASE`
+- `--prefix-mode`: Raw download prefix-proxy mode, `direct`, `fallback`, or `prefer`. Precedence: CLI, config file, then `GH_DOWNLOAD_PREFIX_MODE`
+- `--concurrency`, `-c`: Maximum number of concurrent file downloads for directory transfers. Must be at least `1`; reads config file first and otherwise defaults to `4`
 - `--overwrite`: Replace existing local files instead of skipping them
 - `--json`: Emit one final machine-readable JSON result on stdout
-- `--lang`: Explicit output language, `en` or `zh`
+- `--lang`: Explicit output language, `en` or `zh`. Without `--lang`, config file `lang` overrides locale detection
 - `--debug`: Print debug diagnostics for request URLs, token source, and strategy selection
 - `--no-color`: Disable ANSI color output
 
+### Config file
+
+- Default path: `~/.config/gh-download/config.toml`
+- If `--config <path>` is provided, only that file is read and the default path is ignored
+- `gh-download` does not create the config file automatically
+- Supported keys: `token`, `api_base`, `proxy_base`, `prefix_mode`, `concurrency`, `lang`
+- Positional inputs such as repository, remote path, and local target are not supported in the config file
+- Unknown keys, invalid enum values, and invalid types are treated as configuration errors
+
+Example:
+
+```toml
+api_base = "https://api.github.com"
+proxy_base = "https://gh-proxy.com/"
+prefix_mode = "direct"
+concurrency = 4
+lang = "zh"
+token = "xxxx"
+```
+
+If you store a token in the config file, keep the file permissions appropriately restricted.
+
 ### Environment variables
 
+- Environment variables are used only when the matching CLI option and config-file key are both absent
 - `GITHUB_TOKEN`: GitHub token, preferred over `GH_TOKEN`
 - `GH_TOKEN`: Fallback GitHub token variable
 - `GH_PROXY_BASE`: Explicit URL-prefix proxy base override
@@ -152,12 +183,12 @@ gh-download owner/repo docs ./docs --lang en
 
 - English is the default output language
 - If `LC_ALL`, `LC_MESSAGES`, or `LANG` resolves to a Chinese locale, output switches to Chinese automatically
-- `--lang` has the highest priority and overrides locale detection
+- Priority: `--lang`, then config file `lang`, then locale detection, then the English default
 
 ### Prefix proxy behavior
 
 - `--api-base` changes only the GitHub metadata API base used for repository contents discovery
-- `--proxy-base` and `GH_PROXY_BASE` are used only for raw file download URLs, never for GitHub metadata API requests
+- `--proxy-base`, the config file `proxy_base`, and `GH_PROXY_BASE` are used only for raw file download URLs, never for GitHub metadata API requests
 - `--prefix-mode direct` is the default behavior
 - `--prefix-mode fallback` retries a raw file download through the prefix proxy after a retryable direct-download failure, using the built-in `https://gh-proxy.com/` when no explicit proxy base is set
 - `--prefix-mode prefer` tries the prefix proxy first and falls back to the direct raw file URL if the prefix attempt fails, using the built-in `https://gh-proxy.com/` when no explicit proxy base is set
@@ -174,7 +205,7 @@ gh-download owner/repo docs ./docs --lang en
 
 ### Directory download concurrency
 
-- Directory downloads enumerate the remote tree first, then download files with up to `4` concurrent transfers by default
+- Directory downloads enumerate the remote tree first, then download files with up to `4` concurrent transfers by default when neither CLI nor config specifies another value
 - Use `--concurrency <n>` or `-c <n>` to raise or lower the maximum number of in-flight file downloads for a directory transfer
 - Use `--concurrency 1` or `-c 1` if you want an explicit sequential mode for troubleshooting or low-resource environments
 - Single-file downloads accept `--concurrency` and `-c`, but still download only one resolved file target

@@ -42,6 +42,9 @@ pub enum AppError {
     #[error("json parse failed: {0}")]
     Json(String),
 
+    #[error("invalid configuration: {0}")]
+    Config(String),
+
     #[error("failed to write local path: {path}")]
     Io {
         path: PathBuf,
@@ -223,6 +226,24 @@ pub fn classify_error(
             title,
             reason: format!("Failed to parse the GitHub response: {}", message),
             suggestions: vec!["Try again later, or verify that the proxy response was not altered".to_string()],
+        },
+        (Language::Zh, AppError::Config(message)) => UserFacingError {
+            title,
+            reason: format!("配置文件无效：{}", message),
+            suggestions: vec![
+                "检查 --config 指向的文件是否存在且可读".to_string(),
+                "确认配置文件使用 TOML 格式，且只包含 token、api_base、proxy_base、prefix_mode、concurrency、lang".to_string(),
+                "如果不想使用配置文件，请修正该文件或移除 --config".to_string(),
+            ],
+        },
+        (Language::En, AppError::Config(message)) => UserFacingError {
+            title,
+            reason: format!("Configuration file error: {}", message),
+            suggestions: vec![
+                "Check whether the file passed to --config exists and is readable".to_string(),
+                "Confirm that the file uses TOML and only contains token, api_base, proxy_base, prefix_mode, concurrency, and lang".to_string(),
+                "If you do not want to use a config file, fix it or remove --config".to_string(),
+            ],
         },
         (Language::Zh, AppError::InvalidPath(message)) => UserFacingError {
             title,

@@ -1,10 +1,4 @@
-# Capability: prefix-proxy-mode
-
-## Purpose
-
-Define the explicit raw-download prefix proxy modes and their default URL-prefix proxy behavior.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Raw file downloads support explicit prefix proxy modes
 The CLI SHALL support an explicit prefix proxy mode for raw file downloads. The mode SHALL be configurable by CLI argument, configuration file, and environment variable, and it MUST support `direct`, `fallback`, and `prefer`. The precedence SHALL be: explicit CLI argument, then configuration file, then environment variable, then the default `direct` mode.

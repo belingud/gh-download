@@ -2,14 +2,14 @@ use clap::CommandFactory;
 
 use crate::i18n::Language;
 
-use super::types::Cli;
+use super::types::ParsedCli;
 
 pub fn command() -> clap::Command {
     command_for_language(Language::En)
 }
 
 pub fn command_for_language(language: Language) -> clap::Command {
-    let mut command = Cli::command()
+    let mut command = ParsedCli::command()
         .help_template(help_template(language))
         .about(command_about(language))
         .after_help(command_after_help(language));
@@ -18,6 +18,7 @@ pub fn command_for_language(language: Language) -> clap::Command {
         .mut_arg("repo", |arg| arg.help(repo_help(language)))
         .mut_arg("remote_path", |arg| arg.help(remote_path_help(language)))
         .mut_arg("local_target", |arg| arg.help(local_target_help(language)))
+        .mut_arg("config", |arg| arg.help(config_help(language)))
         .mut_arg("git_ref", |arg| arg.help(ref_help(language)))
         .mut_arg("token", |arg| arg.help(token_help(language)))
         .mut_arg("api_base", |arg| arg.help(api_base_help(language)))
@@ -43,10 +44,10 @@ fn command_about(language: Language) -> &'static str {
 fn command_after_help(language: Language) -> &'static str {
     match language {
         Language::En => {
-            "Examples:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo README.md ./README.md --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh"
+            "Examples:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo README.md ./README.md --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh\n  gh-download owner/repo docs ./docs --config ./gh-download.toml"
         }
         Language::Zh => {
-            "示例:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo README.md ./README.md --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh"
+            "示例:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo README.md ./README.md --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh\n  gh-download owner/repo docs ./docs --config ./gh-download.toml"
         }
     }
 }
@@ -92,27 +93,44 @@ fn ref_help(language: Language) -> &'static str {
     }
 }
 
+fn config_help(language: Language) -> &'static str {
+    match language {
+        Language::En => {
+            "Read options from this TOML config file only. When omitted, ~/.config/gh-download/config.toml is used if it exists"
+        }
+        Language::Zh => {
+            "只从这份 TOML 配置文件读取选项。未提供时，如果 ~/.config/gh-download/config.toml 存在则会读取它"
+        }
+    }
+}
+
 fn token_help(language: Language) -> &'static str {
     match language {
-        Language::En => "GitHub token. Defaults to GITHUB_TOKEN or GH_TOKEN",
-        Language::Zh => "GitHub token。默认读取 GITHUB_TOKEN 或 GH_TOKEN",
+        Language::En => {
+            "GitHub token. Precedence: --token, config file, GITHUB_TOKEN, then GH_TOKEN"
+        }
+        Language::Zh => "GitHub token。优先级依次是 --token、配置文件、GITHUB_TOKEN、GH_TOKEN",
     }
 }
 
 fn api_base_help(language: Language) -> &'static str {
     match language {
-        Language::En => "GitHub metadata API base URL. Defaults to https://api.github.com",
-        Language::Zh => "GitHub metadata API 基础地址。默认值为 https://api.github.com",
+        Language::En => {
+            "GitHub metadata API base URL. Reads config file first, then defaults to https://api.github.com"
+        }
+        Language::Zh => {
+            "GitHub metadata API 基础地址。会先读取配置文件，未设置时默认 https://api.github.com"
+        }
     }
 }
 
 fn proxy_help(language: Language) -> &'static str {
     match language {
         Language::En => {
-            "URL-prefix proxy base for anonymous raw downloads. Defaults to GH_PROXY_BASE; in fallback/prefer mode it falls back to the built-in gh-proxy when unset"
+            "URL-prefix proxy base for anonymous raw downloads. Precedence: CLI, config file, GH_PROXY_BASE; in fallback/prefer mode it falls back to the built-in gh-proxy when unset"
         }
         Language::Zh => {
-            "匿名 raw 下载使用的 URL 前缀代理。默认读取 GH_PROXY_BASE；在 fallback/prefer 模式下未设置时会回退到内置 gh-proxy"
+            "匿名 raw 下载使用的 URL 前缀代理。优先级依次是命令行、配置文件、GH_PROXY_BASE；在 fallback/prefer 模式下未设置时会回退到内置 gh-proxy"
         }
     }
 }
@@ -120,10 +138,10 @@ fn proxy_help(language: Language) -> &'static str {
 fn prefix_mode_help(language: Language) -> &'static str {
     match language {
         Language::En => {
-            "Raw download prefix-proxy mode: direct, fallback, or prefer. Defaults to GH_DOWNLOAD_PREFIX_MODE or direct"
+            "Raw download prefix-proxy mode: direct, fallback, or prefer. Precedence: CLI, config file, GH_DOWNLOAD_PREFIX_MODE, then direct"
         }
         Language::Zh => {
-            "raw 下载的前缀代理模式：direct、fallback 或 prefer。默认读取 GH_DOWNLOAD_PREFIX_MODE，未设置时为 direct"
+            "raw 下载的前缀代理模式：direct、fallback 或 prefer。优先级依次是命令行、配置文件、GH_DOWNLOAD_PREFIX_MODE，最后才是 direct"
         }
     }
 }
@@ -131,9 +149,9 @@ fn prefix_mode_help(language: Language) -> &'static str {
 fn language_help(language: Language) -> &'static str {
     match language {
         Language::En => {
-            "Force the user-facing language. Defaults to English unless the locale indicates Chinese"
+            "Force the user-facing language. Without --lang, the config file language overrides locale detection"
         }
-        Language::Zh => "显式指定用户可见语言。默认英文；当 locale 指向中文时自动切换为中文",
+        Language::Zh => "显式指定用户可见语言。未提供 --lang 时，配置文件语言优先于 locale 检测",
     }
 }
 
@@ -154,9 +172,11 @@ fn json_help(language: Language) -> &'static str {
 fn concurrency_help(language: Language) -> &'static str {
     match language {
         Language::En => {
-            "Maximum number of concurrent file downloads for directory transfers. Must be at least 1. Defaults to 4"
+            "Maximum number of concurrent file downloads for directory transfers. Must be at least 1. Reads config file first, otherwise defaults to 4"
         }
-        Language::Zh => "目录下载时的最大并发文件数，最小为 1，默认值为 4",
+        Language::Zh => {
+            "目录下载时的最大并发文件数，最小为 1。会先读取配置文件，未设置时默认值为 4"
+        }
     }
 }
 
@@ -193,6 +213,7 @@ mod tests {
         assert!(rendered.contains("显式指定用户可见语言"));
         assert!(rendered.contains("--concurrency"));
         assert!(rendered.contains("--api-base"));
+        assert!(rendered.contains("--config"));
         assert!(rendered.contains("--overwrite"));
         assert!(rendered.contains("--json"));
     }

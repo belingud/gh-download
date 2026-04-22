@@ -17,6 +17,7 @@
 - 支持通过 `--concurrency` 或 `-c` 并发下载目录中的文件
 - 默认跳过本地已存在文件，并支持显式 `--overwrite`
 - 支持通过 `--ref` 指定分支、tag 或 commit
+- 支持把常用参数持久化到 `~/.config/gh-download/config.toml` 或显式 `--config` 文件
 - 支持私有仓库访问，可读取 `GITHUB_TOKEN` 或 `GH_TOKEN`
 - 支持 raw 文件下载的显式前缀代理模式
 - 支持通过 `--json` 输出机器可读的最终结果
@@ -62,7 +63,7 @@ cargo build --release
 基本用法：
 
 ```bash
-gh-download <repo> <remote-path> <local-target> [--ref <ref>] [--token <token>] [--api-base <url>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--json] [--lang <en|zh>] [--debug] [--no-color]
+gh-download <repo> <remote-path> <local-target> [--config <path>] [--ref <ref>] [--token <token>] [--api-base <url>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--json] [--lang <en|zh>] [--debug] [--no-color]
 ```
 
 直接运行 `gh-download` 且不带参数时，会按当前生效语言显示帮助信息。
@@ -121,6 +122,12 @@ gh-download owner/private-repo docs ./docs --token "$GITHUB_TOKEN"
 gh-download owner/repo docs ./docs --lang en
 ```
 
+使用显式配置文件：
+
+```bash
+gh-download owner/repo docs ./docs --config ./gh-download.toml
+```
+
 ## 配置说明
 
 ### 主要参数
@@ -128,20 +135,44 @@ gh-download owner/repo docs ./docs --lang en
 - `<repo>`: GitHub 仓库，格式如 `openai/openai-python`
 - `<remote-path>`: 仓库内路径，例如 `README.md` 或 `src/openai`
 - `<local-target>`: 本地输出路径
+- `--config`: 只从这份 TOML 配置文件读取选项。未提供时，如果 `~/.config/gh-download/config.toml` 存在则会读取它
 - `--ref`: 分支、tag 或 commit SHA
-- `--token`: GitHub token
-- `--api-base`: GitHub metadata API 基础地址。默认值为 `https://api.github.com`
-- `--proxy-base`: raw 文件下载重试或 prefer 模式使用的 URL 前缀代理基址
-- `--prefix-mode`: raw 下载前缀代理模式，`direct`、`fallback` 或 `prefer`
-- `--concurrency`、`-c`: 目录下载时的最大并发文件数，最小为 `1`，默认值为 `4`
+- `--token`: GitHub token。优先级依次是 `--token`、配置文件、`GITHUB_TOKEN`、`GH_TOKEN`
+- `--api-base`: GitHub metadata API 基础地址。优先级依次是 `--api-base`、配置文件、默认值 `https://api.github.com`
+- `--proxy-base`: 匿名 raw 文件下载使用的 URL 前缀代理基址。优先级依次是命令行、配置文件、`GH_PROXY_BASE`
+- `--prefix-mode`: raw 下载前缀代理模式，`direct`、`fallback` 或 `prefer`。优先级依次是命令行、配置文件、`GH_DOWNLOAD_PREFIX_MODE`
+- `--concurrency`、`-c`: 目录下载时的最大并发文件数，最小为 `1`。会先读取配置文件，未设置时默认值为 `4`
 - `--overwrite`: 覆盖本地已存在文件，而不是默认跳过
 - `--json`: 在 stdout 输出一个最终的机器可读 JSON 结果
-- `--lang`: 显式指定输出语言，支持 `en` 和 `zh`
+- `--lang`: 显式指定输出语言，支持 `en` 和 `zh`。未提供 `--lang` 时，配置文件 `lang` 优先于 locale 检测
 - `--debug`: 打印请求 URL、token 来源和策略选择的调试信息
 - `--no-color`: 关闭 ANSI 彩色输出
 
+### 配置文件
+
+- 默认路径：`~/.config/gh-download/config.toml`
+- 如果传入 `--config <path>`，本次执行只读取这一个文件，不再读取默认路径
+- `gh-download` 不会自动创建配置文件
+- 支持的键：`token`、`api_base`、`proxy_base`、`prefix_mode`、`concurrency`、`lang`
+- 配置文件不支持仓库、远端路径、本地目标路径这类位置参数
+- 未知键、非法枚举值和非法类型都会直接报配置错误
+
+示例：
+
+```toml
+api_base = "https://api.github.com"
+proxy_base = "https://gh-proxy.com/"
+prefix_mode = "direct"
+concurrency = 4
+lang = "zh"
+token = "xxxx"
+```
+
+如果把 token 写进配置文件，请自行收紧文件权限。
+
 ### 环境变量
 
+- 只有当对应的命令行参数和配置文件键都没有设置时，才会读取环境变量
 - `GITHUB_TOKEN`: GitHub token，优先于 `GH_TOKEN`
 - `GH_TOKEN`: GitHub token 备用变量
 - `GH_PROXY_BASE`: 显式覆盖 URL 前缀代理基址
@@ -152,12 +183,12 @@ gh-download owner/repo docs ./docs --lang en
 
 - 默认输出英文
 - 如果 `LC_ALL`、`LC_MESSAGES` 或 `LANG` 的有效 locale 指向中文，则自动切换为中文
-- `--lang` 优先级最高，可覆盖 locale 检测
+- 优先级依次是 `--lang`、配置文件 `lang`、locale 检测、默认英文
 
 ### 前缀代理行为
 
 - `--api-base` 只改变仓库内容探测使用的 GitHub metadata API base
-- `--proxy-base` 和 `GH_PROXY_BASE` 只用于 raw 文件下载 URL，不用于 GitHub metadata API 请求
+- `--proxy-base`、配置文件 `proxy_base` 和 `GH_PROXY_BASE` 只用于 raw 文件下载 URL，不用于 GitHub metadata API 请求
 - 默认模式是 `--prefix-mode direct`
 - `--prefix-mode fallback` 会在直连 raw 文件下载出现可重试失败后再走前缀代理；如果未显式设置代理基址，则使用内置的 `https://gh-proxy.com/`
 - `--prefix-mode prefer` 会先尝试前缀代理，再在失败后回退到直连 raw 文件 URL；如果未显式设置代理基址，则使用内置的 `https://gh-proxy.com/`
@@ -174,7 +205,7 @@ gh-download owner/repo docs ./docs --lang en
 
 ### 目录下载并发行为
 
-- 目录下载会先枚举远端目录树，再以默认最多 `4` 个并发传输下载文件
+- 当命令行和配置文件都没有指定其他值时，目录下载会先枚举远端目录树，再以默认最多 `4` 个并发传输下载文件
 - 可通过 `--concurrency <n>` 或 `-c <n>` 提高或降低目录下载时同时进行的文件数
 - 如果需要显式顺序模式，便于排障或降低资源占用，可使用 `--concurrency 1` 或 `-c 1`
 - 单文件下载也接受 `--concurrency` 和 `-c`，但最终仍只会下载一个解析出的文件目标

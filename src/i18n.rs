@@ -1,8 +1,11 @@
 use std::ffi::OsString;
 
+use serde::Deserialize;
+
 use clap::ValueEnum;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Language {
     En,
     Zh,
@@ -39,7 +42,7 @@ pub fn detect_language_from_args_and_env(
     Language::detect(parse_language_override(args), lc_all, lc_messages, lang)
 }
 
-fn parse_language_override(args: &[OsString]) -> Option<Language> {
+pub(crate) fn parse_language_override(args: &[OsString]) -> Option<Language> {
     let mut iter = args.iter().skip(1);
     while let Some(arg) = iter.next() {
         let value = arg.to_string_lossy();
@@ -55,7 +58,7 @@ fn parse_language_override(args: &[OsString]) -> Option<Language> {
     None
 }
 
-fn parse_language_value(value: &str) -> Option<Language> {
+pub(crate) fn parse_language_value(value: &str) -> Option<Language> {
     if value.eq_ignore_ascii_case("zh") {
         Some(Language::Zh)
     } else if value.eq_ignore_ascii_case("en") {
