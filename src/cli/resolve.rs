@@ -504,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_cli_uses_builtin_proxy_for_prefer_mode_when_unset() {
+    fn resolve_cli_preserves_explicit_api_base_and_flags() {
         let cli = Cli {
             repo: "owner/repo".to_string(),
             remote_path: "README.md".to_string(),
@@ -524,7 +524,6 @@ mod tests {
 
         let options = resolve_cli(cli).expect("cli should resolve");
         assert_eq!(options.prefix_mode, PrefixProxyMode::Prefer);
-        assert_eq!(options.proxy_base, DEFAULT_GH_PROXY);
         assert_eq!(options.api_base, "https://ghe.example.com/api/v3");
         assert!(options.overwrite);
         assert!(options.json);

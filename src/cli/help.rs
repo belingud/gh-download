@@ -82,7 +82,9 @@ fn local_target_help(language: Language) -> &'static str {
         Language::En => {
             "Local destination path. Files may be written to a file path or an existing directory such as .; directory downloads treat it as the parent directory by default"
         }
-        Language::Zh => "本地目标路径。文件可写入文件路径或现有目录，例如 .；目录下载时默认作为父目录",
+        Language::Zh => {
+            "本地目标路径。文件可写入文件路径或现有目录，例如 .；目录下载时默认作为父目录"
+        }
     }
 }
 
