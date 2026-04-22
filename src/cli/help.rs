@@ -44,10 +44,10 @@ fn command_about(language: Language) -> &'static str {
 fn command_after_help(language: Language) -> &'static str {
     match language {
         Language::En => {
-            "Examples:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo README.md ./README.md --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh\n  gh-download owner/repo docs ./docs --config ./gh-download.toml"
+            "Examples:\n  gh-download openai/openai-python README.md .\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo README.md . --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh\n  gh-download owner/repo docs ./docs --config ./gh-download.toml"
         }
         Language::Zh => {
-            "示例:\n  gh-download openai/openai-python README.md ./README.md\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo README.md ./README.md --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh\n  gh-download owner/repo docs ./docs --config ./gh-download.toml"
+            "示例:\n  gh-download openai/openai-python README.md .\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo README.md . --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh\n  gh-download owner/repo docs ./docs --config ./gh-download.toml"
         }
     }
 }
@@ -80,9 +80,9 @@ fn remote_path_help(language: Language) -> &'static str {
 fn local_target_help(language: Language) -> &'static str {
     match language {
         Language::En => {
-            "Local destination path. Files may be written to a file path or an existing directory; directory downloads treat it as the parent directory by default"
+            "Local destination path. Files may be written to a file path or an existing directory such as .; directory downloads treat it as the parent directory by default"
         }
-        Language::Zh => "本地目标路径。文件可写入文件路径或现有目录；目录下载时默认作为父目录",
+        Language::Zh => "本地目标路径。文件可写入文件路径或现有目录，例如 .；目录下载时默认作为父目录",
     }
 }
 

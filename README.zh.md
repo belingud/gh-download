@@ -71,8 +71,10 @@ gh-download <repo> <remote-path> <local-target> [--config <path>] [--ref <ref>] 
 下载单个文件：
 
 ```bash
-gh-download openai/openai-python README.md ./README.md
+gh-download openai/openai-python README.md .
 ```
+
+下载单个文件时，`<local-target>` 也可以直接写成现有目录，例如 `.`。这时 CLI 会自动使用远端文件名保存到该目录下。
 
 下载整个目录：
 
@@ -101,7 +103,7 @@ gh-download owner/repo src ./downloads --overwrite
 输出机器可读 JSON 结果：
 
 ```bash
-gh-download owner/repo README.md ./README.md --json
+gh-download owner/repo README.md . --json
 ```
 
 使用自定义 GitHub metadata API base 下载：

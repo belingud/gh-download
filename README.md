@@ -71,8 +71,10 @@ Run `gh-download` without arguments to show the help screen in the effective lan
 Download a single file:
 
 ```bash
-gh-download openai/openai-python README.md ./README.md
+gh-download openai/openai-python README.md .
 ```
+
+For a single file, `<local-target>` may also be an existing directory such as `.`. In that case, the CLI uses the remote file name automatically.
 
 Download a directory:
 
@@ -101,7 +103,7 @@ gh-download owner/repo src ./downloads --overwrite
 Emit a machine-readable JSON result:
 
 ```bash
-gh-download owner/repo README.md ./README.md --json
+gh-download owner/repo README.md . --json
 ```
 
 Download using a custom GitHub metadata API base:

@@ -41,6 +41,7 @@ If code and docs/specs diverge, treat that as a problem to resolve rather than a
 - Avoid putting transient implementation details into persistent project guidance.
 - When behavior changes, assume tests need to change too.
 - When user-facing behavior changes, review whether docs and active specs also need updates.
+- When CLI usage, parameters, or defaults change, review whether repository skills under `skills/` also need updates.
 - Prefer local, repeatable tests and avoid depending on live network behavior where practical.
 - Do not assume file layout is stable; inspect the current tree instead of relying on historical structure notes.
 

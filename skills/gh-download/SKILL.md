@@ -1,6 +1,6 @@
 ---
 name: gh-download
-description: Use this skill when you need to download a single file or a whole directory from a GitHub repository path with the gh-download CLI, including installation checks, common parameter selection, private-repo token usage, GitHub Enterprise API base support, prefix-proxy modes, and machine-readable JSON output.
+description: Use this skill when you need to download a single file or a whole directory from a GitHub repository path with the gh-download CLI, including installation checks, config-file defaults, private-repo token usage, GitHub Enterprise API base support, prefix-proxy modes, and machine-readable JSON output.
 version: 0.4.0
 metadata:
   openclaw:
@@ -26,12 +26,16 @@ Typical use cases:
 
 ## Notes
 
-- For single-file downloads, the local target can be either a file path or an existing directory.
+- For single-file downloads, the local target can be either a file path or an existing directory such as `.`.
 - For directory downloads, the remote relative path structure is preserved. In most cases, the tool creates a same-named directory under the local target unless the local target already ends with that directory name.
 - Existing local files are not overwritten by default. Use `--overwrite` explicitly if replacement is intended.
 - Raw file downloads can use prefix-proxy modes, but GitHub metadata API requests must not go through URL-prefix proxies such as `gh-proxy`.
 - When a token is present, authentication credentials are not forwarded to a public prefix proxy.
 - `--json` switches `stdout` to a single final JSON document. If `--debug` is also enabled, debug output still goes to `stderr`.
+- The CLI can read persisted defaults from `~/.config/gh-download/config.toml`.
+- `--config <path>` makes the CLI read only that TOML config file for the current invocation.
+- Supported config keys are `token`, `api_base`, `proxy_base`, `prefix_mode`, `concurrency`, and `lang`.
+- Effective precedence is: CLI argument, then config file, then environment variable, then built-in default.
 
 ## Make Sure It Is Installed First
 
@@ -84,6 +88,7 @@ Positional arguments:
 ## Parameters
 
 - `--ref <ref>`: Specify a branch, tag, or commit SHA
+- `--config <path>`: Read options from this TOML config file only. When omitted, `~/.config/gh-download/config.toml` is used if it exists
 - `--token <token>`: Specify a GitHub token. If omitted, the CLI reads `GITHUB_TOKEN` or `GH_TOKEN`
 - `--api-base <url>`: Specify a custom GitHub metadata API base URL for GitHub Enterprise or compatible deployments
 - `--proxy-base <url>`: Specify the URL-prefix proxy base used for raw file downloads
@@ -97,19 +102,32 @@ Positional arguments:
 
 Related environment variables:
 
-- `GITHUB_TOKEN`: Preferred GitHub token
+- `GITHUB_TOKEN`: Preferred GitHub token when neither CLI nor config file provides `token`
 - `GH_TOKEN`: Fallback GitHub token
-- `GH_PROXY_BASE`: Default prefix-proxy base
-- `GH_DOWNLOAD_PREFIX_MODE`: Default prefix-proxy mode
+- `GH_PROXY_BASE`: Default prefix-proxy base when neither CLI nor config file provides `proxy_base`
+- `GH_DOWNLOAD_PREFIX_MODE`: Default prefix-proxy mode when neither CLI nor config file provides `prefix_mode`
 - `GH_DOWNLOAD_DEBUG`: Enable debug output when set to a truthy value
+
+Config file example:
+
+```toml
+api_base = "https://api.github.com"
+proxy_base = "https://gh-proxy.com/"
+prefix_mode = "direct"
+concurrency = 4
+lang = "zh"
+token = "xxxx"
+```
 
 ## Examples
 
 Download a single file:
 
 ```bash
-gh-download openai/openai-python README.md ./README.md
+gh-download openai/openai-python README.md .
 ```
+
+If the local target is an existing directory such as `.`, the CLI saves the file under its remote file name automatically.
 
 Download an entire directory:
 
@@ -147,6 +165,12 @@ Use a custom GitHub metadata API base:
 gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3
 ```
 
+Use an explicit config file:
+
+```bash
+gh-download owner/repo docs ./docs --config ./gh-download.toml
+```
+
 Use anonymous raw download fallback proxy mode:
 
 ```bash
@@ -164,7 +188,7 @@ cargo run -- owner/repo src ./downloads --json --no-color
 Enable it with:
 
 ```bash
-gh-download owner/repo README.md ./README.md --json
+gh-download owner/repo README.md . --json
 ```
 
 Success output includes:
