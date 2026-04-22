@@ -1,0 +1,237 @@
+<svg width="2350" height="1000" viewBox="0 0 2350 1000" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="108" y1="72" x2="2200" y2="940" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#07111D"/>
+      <stop offset="0.48" stop-color="#0C2237"/>
+      <stop offset="1" stop-color="#0A1A2A"/>
+    </linearGradient>
+    <radialGradient id="glowLeft" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(540 310) rotate(25) scale(520 420)">
+      <stop stop-color="#2AA9FF" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#2AA9FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowRight" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1740 410) rotate(30) scale(720 520)">
+      <stop stop-color="#5ED6FF" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#5ED6FF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="panel" x1="1160" y1="144" x2="1988" y2="798" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#112A42" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#0B1B2C" stop-opacity="0.98"/>
+    </linearGradient>
+    <linearGradient id="terminal" x1="1510" y1="514" x2="2140" y2="844" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F2A42"/>
+      <stop offset="1" stop-color="#0A1624"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="1358" y1="396" x2="1800" y2="652" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#66D6FF" stop-opacity="0.1"/>
+      <stop offset="0.34" stop-color="#66D6FF" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#83C6FF" stop-opacity="0.2"/>
+    </linearGradient>
+    <linearGradient id="lineA" x1="1390" y1="374" x2="1710" y2="590" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7BE1FF"/>
+      <stop offset="1" stop-color="#8BA8FF"/>
+    </linearGradient>
+    <linearGradient id="lineB" x1="1408" y1="430" x2="1716" y2="620" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9AD7FF"/>
+      <stop offset="1" stop-color="#58B5FF"/>
+    </linearGradient>
+    <linearGradient id="lineC" x1="1418" y1="478" x2="1722" y2="658" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A8F0FF"/>
+      <stop offset="1" stop-color="#7F93FF"/>
+    </linearGradient>
+    <filter id="blurLarge" x="0" y="0" width="2350" height="1000" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="52"/>
+    </filter>
+    <filter id="shadow" x="1070" y="120" width="990" height="760" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="28" stdDeviation="28" flood-color="#020812" flood-opacity="0.45"/>
+    </filter>
+    <filter id="softShadow" x="1420" y="490" width="860" height="360" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#020812" flood-opacity="0.4"/>
+    </filter>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" stroke="#B9D9F7" stroke-opacity="0.06" stroke-width="1"/>
+    </pattern>
+    <style>
+      .title {
+        font-family: "PingFang SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+        fill: #F5FBFF;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .subtitle {
+        font-family: "PingFang SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+        fill: #B9D3E9;
+        font-weight: 400;
+      }
+      .label {
+        font-family: "PingFang SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+        fill: #D7F2FF;
+        font-size: 26px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+      }
+      .small {
+        font-family: "PingFang SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+        fill: #9AB8D0;
+        font-size: 24px;
+        font-weight: 500;
+      }
+      .mono {
+        font-family: "SF Mono", Menlo, Monaco, "Courier New", monospace;
+        fill: #DDF5FF;
+        font-size: 26px;
+      }
+      .node {
+        font-family: "SF Mono", Menlo, Monaco, "Courier New", monospace;
+        fill: #D7EFFF;
+        font-size: 24px;
+        font-weight: 500;
+      }
+      .node-dim {
+        font-family: "SF Mono", Menlo, Monaco, "Courier New", monospace;
+        fill: #7B97AF;
+        font-size: 22px;
+      }
+      .tag {
+        font-family: "PingFang SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+        fill: #B7EEFF;
+        font-size: 22px;
+        font-weight: 600;
+      }
+    </style>
+  </defs>
+
+  <rect width="2350" height="1000" fill="url(#bg)"/>
+  <rect width="2350" height="1000" fill="url(#grid)"/>
+
+  <g filter="url(#blurLarge)">
+    <ellipse cx="500" cy="300" rx="280" ry="180" fill="url(#glowLeft)"/>
+    <ellipse cx="1780" cy="400" rx="380" ry="220" fill="url(#glowRight)"/>
+  </g>
+
+  <path d="M1450 120C1550 160 1640 230 1716 320C1792 410 1844 504 1908 612C1972 720 2058 812 2190 892" stroke="#7AD8FF" stroke-opacity="0.08" stroke-width="2"/>
+  <path d="M1360 164C1468 224 1544 312 1606 424C1668 536 1738 644 1848 812" stroke="#B7ECFF" stroke-opacity="0.06" stroke-width="2"/>
+  <path d="M1482 96C1644 128 1776 238 1888 424C2000 610 2088 752 2242 880" stroke="#9AB9FF" stroke-opacity="0.05" stroke-width="2"/>
+
+  <g transform="translate(145 126)">
+    <rect x="0" y="0" width="456" height="54" rx="27" fill="#10253A" fill-opacity="0.88" stroke="#2E91C7" stroke-opacity="0.45"/>
+    <circle cx="34" cy="27" r="7" fill="#66D6FF"/>
+    <text x="58" y="35" class="label">GITHUB PATH DOWNLOAD</text>
+
+    <text x="0" y="184" class="title" font-size="128">
+      <tspan x="0" dy="0">gh-download</tspan>
+    </text>
+
+    <text x="6" y="282" class="subtitle" font-size="40">GitHub 路径下载工具</text>
+
+    <text x="4" y="418" class="subtitle" font-size="34">
+      <tspan x="4" dy="0">按仓库路径下载文件或目录，省掉 zip、解压和手工整理。</tspan>
+      <tspan x="4" dy="56">先判断目标类型，再把真正需要的那一部分直接写到本地。</tspan>
+    </text>
+
+    <g transform="translate(0 598)">
+      <rect x="0" y="0" width="170" height="54" rx="27" fill="#123652" fill-opacity="0.9" stroke="#2EA7DE" stroke-opacity="0.38"/>
+      <text x="30" y="35" class="tag">文件下载</text>
+      <rect x="192" y="0" width="170" height="54" rx="27" fill="#123652" fill-opacity="0.82" stroke="#2EA7DE" stroke-opacity="0.28"/>
+      <text x="222" y="35" class="tag">目录递归</text>
+      <rect x="384" y="0" width="160" height="54" rx="27" fill="#123652" fill-opacity="0.78" stroke="#2EA7DE" stroke-opacity="0.24"/>
+      <text x="420" y="35" class="tag">终端优先</text>
+      <rect x="566" y="0" width="168" height="54" rx="27" fill="#123652" fill-opacity="0.72" stroke="#2EA7DE" stroke-opacity="0.2"/>
+      <text x="602" y="35" class="tag">直接落盘</text>
+    </g>
+
+    <g transform="translate(0 720)">
+      <rect x="0" y="0" width="720" height="130" rx="36" fill="#0E2135" fill-opacity="0.84" stroke="#1C4667" stroke-opacity="0.85"/>
+      <circle cx="54" cy="66" r="6" fill="#7CDFFF"/>
+      <circle cx="82" cy="66" r="6" fill="#FFCB7E"/>
+      <text x="120" y="74" class="small">只下载部分文件</text>
+      <text x="52" y="116" class="mono">gh-download owner/repo path ./target</text>
+    </g>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1110" y="140" width="760" height="520" rx="38" fill="url(#panel)" stroke="#1B4567" stroke-width="2"/>
+    <rect x="1110" y="140" width="760" height="76" rx="38" fill="#112E47" fill-opacity="0.88"/>
+    <circle cx="1164" cy="178" r="8" fill="#F97B7B"/>
+    <circle cx="1194" cy="178" r="8" fill="#F5C26B"/>
+    <circle cx="1224" cy="178" r="8" fill="#6CE1A5"/>
+    <text x="1270" y="187" class="mono" font-size="24">repository tree</text>
+
+    <g transform="translate(1160 250)">
+      <rect x="0" y="0" width="660" height="62" rx="22" fill="#132D45" stroke="#214E73" stroke-opacity="0.6"/>
+      <circle cx="32" cy="31" r="9" fill="#77E0FF"/>
+      <text x="60" y="39" class="node">owner/repo</text>
+      <text x="514" y="39" class="node-dim">branch: main</text>
+
+      <rect x="28" y="92" width="604" height="56" rx="18" fill="#10263A"/>
+      <rect x="28" y="164" width="604" height="56" rx="18" fill="#10263A"/>
+      <rect x="28" y="236" width="604" height="56" rx="18" fill="#10263A"/>
+      <rect x="28" y="308" width="604" height="56" rx="18" fill="#10263A"/>
+
+      <rect x="28" y="164" width="604" height="56" rx="18" fill="#163754" stroke="#45C8FF" stroke-opacity="0.8" stroke-width="2"/>
+      <rect x="28" y="236" width="604" height="56" rx="18" fill="#14324C" stroke="#7CB9FF" stroke-opacity="0.72" stroke-width="2"/>
+
+      <text x="58" y="127" class="node">README.md</text>
+      <text x="58" y="199" class="node">skills/baoyu-translate/</text>
+      <text x="58" y="271" class="node">docs/guide.md</text>
+      <text x="58" y="343" class="node">.github/workflows/ci.yml</text>
+
+      <rect x="466" y="176" width="126" height="32" rx="16" fill="#1C486A"/>
+      <text x="490" y="198" class="tag" font-size="18">selected</text>
+
+      <rect x="492" y="248" width="100" height="32" rx="16" fill="#183C60"/>
+      <text x="520" y="270" class="tag" font-size="18">path</text>
+
+      <path d="M616 192H660" stroke="#61D5FF" stroke-width="4" stroke-linecap="round"/>
+      <path d="M616 264H660" stroke="#8EBBFF" stroke-width="4" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <path d="M1730 370C1640 388 1590 420 1528 454C1466 488 1406 520 1328 534L1328 442C1398 428 1454 400 1512 364C1570 328 1640 298 1730 280V370Z" fill="url(#beam)" opacity="0.95"/>
+  <path d="M1376 354C1466 370 1530 406 1592 464C1654 522 1712 566 1812 596" stroke="url(#lineA)" stroke-width="7" stroke-linecap="round" stroke-opacity="0.95"/>
+  <path d="M1388 408C1466 430 1536 474 1590 538C1644 602 1700 640 1792 668" stroke="url(#lineB)" stroke-width="7" stroke-linecap="round" stroke-opacity="0.92"/>
+  <path d="M1398 462C1468 492 1532 546 1578 608C1624 670 1678 712 1768 744" stroke="url(#lineC)" stroke-width="7" stroke-linecap="round" stroke-opacity="0.88"/>
+  <circle cx="1400" cy="360" r="11" fill="#75E2FF"/>
+  <circle cx="1408" cy="414" r="11" fill="#94D3FF"/>
+  <circle cx="1418" cy="468" r="11" fill="#A8ECFF"/>
+  <circle cx="1794" cy="666" r="10" fill="#5EBEFF"/>
+  <circle cx="1816" cy="596" r="10" fill="#7DDFFF"/>
+
+  <g filter="url(#softShadow)">
+    <rect x="1460" y="518" width="740" height="270" rx="34" fill="url(#terminal)" stroke="#1C486A" stroke-width="2"/>
+    <rect x="1460" y="518" width="740" height="66" rx="34" fill="#112A42"/>
+    <circle cx="1552" cy="551" r="7" fill="#F97B7B"/>
+    <circle cx="1578" cy="551" r="7" fill="#F5C26B"/>
+    <circle cx="1604" cy="551" r="7" fill="#6CE1A5"/>
+    <text x="1650" y="559" class="mono" font-size="22">terminal</text>
+
+    <text x="1508" y="640" class="mono">&gt; gh-download owner/repo docs ./downloads</text>
+    <text x="1508" y="700" class="small">识别目标类型  ·  递归写入本地  ·  保留相对路径</text>
+
+    <g transform="translate(1508 720)">
+      <rect x="0" y="0" width="172" height="32" rx="16" fill="#123B58"/>
+      <text x="34" y="22" class="tag" font-size="18">file</text>
+      <rect x="192" y="0" width="190" height="32" rx="16" fill="#123B58"/>
+      <text x="226" y="22" class="tag" font-size="18">directory</text>
+      <rect x="402" y="0" width="146" height="32" rx="16" fill="#123B58"/>
+      <text x="436" y="22" class="tag" font-size="18">stream</text>
+    </g>
+  </g>
+
+  <g transform="translate(2010 676)">
+    <path d="M0 42C0 18 18 0 42 0H118L146 30H242C266 30 284 48 284 72V168C284 192 266 210 242 210H42C18 210 0 192 0 168V42Z" fill="#143A57" stroke="#41C9FF" stroke-width="3"/>
+    <path d="M42 0H118L136 22H242C266 22 284 40 284 64V78H0V42C0 18 18 0 42 0Z" fill="#1A4C71"/>
+    <path d="M46 142L92 186L198 90" stroke="#80E7FF" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="48" y="246" class="label" font-size="24">local target</text>
+  </g>
+
+  <g transform="translate(1648 156)">
+    <rect x="0" y="0" width="500" height="108" rx="34" fill="#0E2032" fill-opacity="0.84" stroke="#1B4567"/>
+    <text x="34" y="42" class="small">只拿真正要用的那一部分，不必先 clone 整个仓库。</text>
+    <text x="34" y="78" class="mono" font-size="20">files + folders + paths</text>
+  </g>
+
+  <g transform="translate(1508 872)">
+    <text x="0" y="0" class="mono" font-size="30">gh-download</text>
+    <text x="0" y="38" class="small" font-size="24">GitHub 路径下载工具</text>
+  </g>
+</svg>
