@@ -1,0 +1,43 @@
+name: Feature request / 功能建议
+description: Suggest a focused gh-download improvement. / 提出聚焦的改进建议。
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case / 使用场景
+      description: What workflow would this improve?
+      placeholder: "I want to download..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior / 期望行为
+      description: What should gh-download do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / 已考虑的替代方案
+      description: Existing commands, scripts, or workarounds you tried.
+    validations:
+      required: false
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface / 影响范围
+      options:
+        - CLI arguments
+        - Download behavior
+        - Authentication or token handling
+        - Proxy behavior
+        - JSON or debug output
+        - Documentation
+        - Release packaging
+        - Not sure
+    validations:
+      required: true

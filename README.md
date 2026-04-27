@@ -2,13 +2,40 @@
 
 [简体中文](README.zh.md)
 
-`gh-download` is a command-line tool for downloading a single file or an entire directory from a GitHub repository.
+[![CI](https://github.com/belingud/gh-download/actions/workflows/ci.yml/badge.svg)](https://github.com/belingud/gh-download/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/gh-download.svg)](https://crates.io/crates/gh-download)
+[![docs.rs](https://docs.rs/gh-download/badge.svg)](https://docs.rs/gh-download)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+`gh-download` is a small Rust command-line tool for downloading a single file or an entire directory from a GitHub repository without cloning the repository.
 
 It works well when you want to:
 
 - fetch one file without cloning a whole repository
 - copy a directory without pulling full git history
 - download content from public or private repositories in scripts or terminals
+
+## Quick Start
+
+Install with Cargo:
+
+```bash
+cargo install gh-download
+```
+
+Or download a prebuilt binary from [GitHub Releases](https://github.com/belingud/gh-download/releases).
+
+Download a single file:
+
+```bash
+gh-download openai/openai-python README.md .
+```
+
+Download a directory:
+
+```bash
+gh-download owner/repo src ./downloads
+```
 
 ## Features
 

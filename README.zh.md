@@ -2,13 +2,40 @@
 
 [English](README.md)
 
-`gh-download` 是一个命令行工具，用来从 GitHub 仓库中下载单个文件或整个目录。
+[![CI](https://github.com/belingud/gh-download/actions/workflows/ci.yml/badge.svg)](https://github.com/belingud/gh-download/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/gh-download.svg)](https://crates.io/crates/gh-download)
+[![docs.rs](https://docs.rs/gh-download/badge.svg)](https://docs.rs/gh-download)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+`gh-download` 是一个小型 Rust 命令行工具，用来从 GitHub 仓库中下载单个文件或整个目录，不需要克隆仓库。
 
 它适合这些场景：
 
-- 想直接拿仓库里的某个文件，不想克隆整个仓库
-- 想把某个目录拷到本地，但不需要完整的 git 历史
+- 想直接下载仓库里的某个文件，不想克隆整个仓库
+- 想把某个目录复制到本地，但不需要完整的 git 历史
 - 想在脚本或终端里快速下载公开仓库或私有仓库内容
+
+## 快速开始
+
+通过 Cargo 安装：
+
+```bash
+cargo install gh-download
+```
+
+也可以从 [GitHub Releases](https://github.com/belingud/gh-download/releases) 下载预编译二进制。
+
+下载单个文件：
+
+```bash
+gh-download openai/openai-python README.md .
+```
+
+下载整个目录：
+
+```bash
+gh-download owner/repo src ./downloads
+```
 
 ## 功能特点
 
