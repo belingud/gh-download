@@ -4,15 +4,15 @@
 TBD - created by archiving change improve-open-source-entrypoints. Update Purpose after archive.
 ## Requirements
 ### Requirement: Repository exposes concise multilingual README entrypoints
-The repository SHALL maintain both `README.md` and `README.zh.md` as primary user entrypoints. Each README MUST present the project purpose, status badges, installation entrypoints, and a minimal file download example near the top of the document before detailed configuration and output reference sections.
+The repository SHALL maintain both `README.md` and `README.zh.md` as primary user entrypoints. Each README MUST present the project purpose, status badges, installation entrypoints including the Homebrew tap command, and a minimal file download example near the top of the document before detailed configuration and output reference sections.
 
 #### Scenario: User opens the English README
 - **WHEN** a user opens `README.md`
-- **THEN** the top section presents the project purpose, status badges, installation entrypoints, and a minimal `gh-download` example before detailed option reference content
+- **THEN** the top section presents the project purpose, status badges, Homebrew and alternative installation entrypoints, and a minimal `gh-download` example before detailed option reference content
 
 #### Scenario: User opens the Chinese README
 - **WHEN** a user opens `README.zh.md`
-- **THEN** the top section presents semantically equivalent Chinese project purpose, status badges, installation entrypoints, and a minimal `gh-download` example before detailed option reference content
+- **THEN** the top section presents semantically equivalent Chinese project purpose, status badges, Homebrew and alternative installation entrypoints, and a minimal `gh-download` example before detailed option reference content
 
 ### Requirement: Repository provides lightweight contribution and support files
 The repository SHALL provide root-level `CONTRIBUTING.md`, `SUPPORT.md`, `SECURITY.md`, and `CODE_OF_CONDUCT.md` files that describe how users contribute changes, get support, report security-sensitive issues, and participate respectfully.
@@ -42,4 +42,3 @@ The repository SHALL provide a pull request template that prompts contributors t
 #### Scenario: Contributor opens a pull request
 - **WHEN** a contributor opens a pull request
 - **THEN** the pull request body starts with a template that asks for change summary, verification, and product-surface impact checks
-

@@ -17,7 +17,13 @@ It works well when you want to:
 
 ## Quick Start
 
-Install with Cargo:
+Install with Homebrew:
+
+```bash
+brew install belingud/tap/gh-download
+```
+
+Or install with Cargo:
 
 ```bash
 cargo install gh-download
@@ -54,6 +60,12 @@ gh-download owner/repo src ./downloads
 - Switch between English and Chinese automatically or explicitly
 
 ## Installation
+
+### Install with Homebrew
+
+```bash
+brew install belingud/tap/gh-download
+```
 
 ### Install with Cargo
 

@@ -17,7 +17,13 @@
 
 ## 快速开始
 
-通过 Cargo 安装：
+通过 Homebrew 安装：
+
+```bash
+brew install belingud/tap/gh-download
+```
+
+也可以通过 Cargo 安装：
 
 ```bash
 cargo install gh-download
@@ -54,6 +60,12 @@ gh-download owner/repo src ./downloads
 - 支持英文和中文输出，可按 locale 自动切换，也可显式指定
 
 ## 安装指南
+
+### 通过 Homebrew 安装
+
+```bash
+brew install belingud/tap/gh-download
+```
 
 ### 通过 Cargo 安装
 
