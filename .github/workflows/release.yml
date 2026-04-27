@@ -114,9 +114,66 @@ jobs:
           cd dist
           sha256sum *.tar.gz *.zip > checksums.txt
 
+      - name: Generate release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          GENERATED_NOTES="$(
+            gh api "repos/${REPO}/releases/generate-notes" \
+              -f tag_name="${TAG_NAME}" \
+              -f target_commitish="${GITHUB_SHA}" \
+              --jq '.body // ""'
+          )"
+
+          {
+            echo "# gh-download ${TAG_NAME}"
+            echo
+            echo "Prebuilt archives and checksums for ${TAG_NAME}."
+            echo
+            echo "## Install"
+            echo
+            echo "- Cargo: \`cargo install gh-download\`"
+            echo "- Prebuilt binary: download the archive matching your platform from the assets below."
+            echo
+            echo "中文：可以通过 \`cargo install gh-download\` 安装，也可以从下方资产中下载对应平台的预编译二进制。"
+            echo
+            echo "## Assets"
+            echo
+            echo "| Platform | Asset |"
+            echo "| --- | --- |"
+            echo "| Linux x86_64 | \`gh-download-${TAG_NAME}-x86_64-unknown-linux-musl.tar.gz\` |"
+            echo "| Linux ARM64 | \`gh-download-${TAG_NAME}-aarch64-unknown-linux-musl.tar.gz\` |"
+            echo "| macOS Intel | \`gh-download-${TAG_NAME}-x86_64-apple-darwin.tar.gz\` |"
+            echo "| macOS Apple Silicon | \`gh-download-${TAG_NAME}-aarch64-apple-darwin.tar.gz\` |"
+            echo "| Windows x86_64 | \`gh-download-${TAG_NAME}-x86_64-pc-windows-msvc.zip\` |"
+            echo
+            echo "## Verify"
+            echo
+            echo "Download \`checksums.txt\` and the archive, then run:"
+            echo
+            echo "\`\`\`bash"
+            echo "sha256sum -c checksums.txt"
+            echo "\`\`\`"
+            echo
+            echo "中文：下载 \`checksums.txt\` 和对应压缩包后，可以用上面的命令校验 SHA-256。"
+            echo
+            echo "## Changes"
+            echo
+            if [ -n "${GENERATED_NOTES}" ]; then
+              printf '%s\n' "${GENERATED_NOTES}"
+            else
+              echo "- GitHub did not return generated notes for this tag."
+            fi
+          } > dist/release-notes.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          body_path: dist/release-notes.md
           files: |
             dist/*.tar.gz
             dist/*.zip
