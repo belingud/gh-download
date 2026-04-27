@@ -1,7 +1,5 @@
 ## Context
 
-The repository currently centers on [download_github_path.py](/Users/vic/Documents/codes/git/gh-download/download_github_path.py:1), a Python script that downloads either a file or a directory from a GitHub repository path using the GitHub Contents API, optional token authentication, and a public proxy fallback. The new change replaces the Python-first delivery model with a compiled Rust CLI while preserving the practical download workflow users already rely on.
-
 This change crosses several concerns at once:
 
 - CLI UX: argument parsing, colored output, concise progress reporting, and actionable failure messages
