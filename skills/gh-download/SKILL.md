@@ -1,7 +1,7 @@
 ---
 name: gh-download
 description: Use this skill when you need to download a single file or a whole directory from a GitHub repository path with the gh-download CLI, including installation checks, config-file defaults, private-repo token usage, GitHub Enterprise API base support, prefix-proxy modes, and machine-readable JSON output.
-version: 0.4.0
+version: 0.5.0
 metadata:
   openclaw:
     homepage: https://github.com/belingud/gh-download
@@ -46,6 +46,12 @@ gh-download --version
 ```
 
 If it is not installed yet, use one of the following options.
+
+Install with Homebrew:
+
+```bash
+brew install belingud/tap/gh-download
+```
 
 Install with Cargo:
 

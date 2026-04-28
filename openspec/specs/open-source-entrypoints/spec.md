@@ -42,3 +42,10 @@ The repository SHALL provide a pull request template that prompts contributors t
 #### Scenario: Contributor opens a pull request
 - **WHEN** a contributor opens a pull request
 - **THEN** the pull request body starts with a template that asks for change summary, verification, and product-surface impact checks
+
+### Requirement: Repository skill install guidance stays aligned
+The repository SHALL maintain `skills/gh-download/SKILL.md` as an agent-facing entrypoint for the CLI. The skill metadata version MUST match the package version in `Cargo.toml`, and its installation guidance MUST include the Homebrew tap command, Cargo installation, and source build path.
+
+#### Scenario: Agent reads the gh-download skill
+- **WHEN** an agent opens `skills/gh-download/SKILL.md`
+- **THEN** the skill metadata version matches the package version and the installation section includes `brew install belingud/tap/gh-download`, `cargo install gh-download`, and source build guidance

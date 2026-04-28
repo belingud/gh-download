@@ -20,7 +20,10 @@ pub use self::paths::{
     build_contents_api_url, choose_directory_target, format_remote_path, join_proxy_url,
     normalize_repo_path, relative_item_path,
 };
-use self::paths::{choose_file_target, file_name_from_remote_path, redact_url_for_display};
+use self::paths::{
+    choose_file_target, file_name_from_remote_path, redact_url_for_display,
+    safe_directory_relative_item_path,
+};
 use self::raw::{RawDownloadStrategy, should_attempt_prefix_proxy};
 use self::transport::{build_client, send_json_request, stream_download};
 
@@ -261,7 +264,7 @@ impl Runner {
             .into_iter()
             .map(|item| {
                 let item_path = item.path.clone().ok_or(AppError::MissingRepositoryPath)?;
-                let relative_part = relative_item_path(remote_root, &item_path);
+                let relative_part = safe_directory_relative_item_path(remote_root, &item_path)?;
                 Ok(DownloadJob {
                     item,
                     local_target: directory_target.join(&relative_part),
@@ -878,6 +881,26 @@ mod tests {
         assert_eq!(jobs[0].local_target, directory_target.join("main.rs"));
         assert_eq!(jobs[1].shown_path, "nested/lib.rs");
         assert_eq!(jobs[1].local_target, directory_target.join("nested/lib.rs"));
+    }
+
+    #[test]
+    fn build_directory_download_jobs_rejects_unsafe_metadata_paths() {
+        let runner = Runner::new(RuntimeConfig::default(), Output::new(false, Language::En));
+        let directory_target = Path::new("/tmp/downloads/src");
+        let files = vec![ContentItem {
+            name: Some("outside.rs".to_string()),
+            path: Some("src/../outside.rs".to_string()),
+            kind: Some("file".to_string()),
+            download_url: Some("https://example.invalid/outside.rs".to_string()),
+        }];
+
+        let error = runner
+            .build_directory_download_jobs(directory_target, "src", files)
+            .expect_err("unsafe path should fail");
+
+        assert!(
+            matches!(error, AppError::InvalidPath(message) if message.contains("unsafe directory metadata path"))
+        );
     }
 
     #[test]

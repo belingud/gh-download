@@ -84,6 +84,65 @@ jobs:
           Copy-Item LICENSE "dist/$PackageName/"
           Compress-Archive -Path "dist/$PackageName" -DestinationPath "dist/$PackageName.zip" -Force
 
+      - name: Verify packaged archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          PACKAGE_NAME="gh-download-${VERSION}-${{ matrix.target }}"
+          ARCHIVE="dist/${PACKAGE_NAME}.tar.gz"
+
+          test -f "${ARCHIVE}"
+          for path in \
+            "${PACKAGE_NAME}/gh-download" \
+            "${PACKAGE_NAME}/README.md" \
+            "${PACKAGE_NAME}/README.zh.md" \
+            "${PACKAGE_NAME}/LICENSE"
+          do
+            tar -tzf "${ARCHIVE}" "${path}" >/dev/null
+          done
+
+          case "${{ matrix.target }}" in
+            aarch64-unknown-linux-musl)
+              echo "Skipping --version for cross-built target ${{ matrix.target }}"
+              ;;
+            *)
+              "dist/${PACKAGE_NAME}/gh-download" --version
+              ;;
+          esac
+
+      - name: Verify packaged archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Version = $env:GITHUB_REF_NAME
+          $PackageName = "gh-download-$Version-${{ matrix.target }}"
+          $Archive = "dist/$PackageName.zip"
+          $ExtractDir = "dist/verify-$PackageName"
+
+          if (!(Test-Path $Archive)) {
+            throw "Missing archive: $Archive"
+          }
+
+          Expand-Archive -Path $Archive -DestinationPath $ExtractDir -Force
+          $ExpectedPaths = @(
+            "$PackageName/gh-download.exe",
+            "$PackageName/README.md",
+            "$PackageName/README.zh.md",
+            "$PackageName/LICENSE"
+          )
+
+          foreach ($Path in $ExpectedPaths) {
+            $FullPath = Join-Path $ExtractDir $Path
+            if (!(Test-Path $FullPath)) {
+              throw "Archive is missing $Path"
+            }
+          }
+
+          & "dist/$PackageName/gh-download.exe" --version
+
       - name: Upload packaged artifact
         uses: actions/upload-artifact@v7
         with:
@@ -136,10 +195,11 @@ jobs:
             echo
             echo "## Install"
             echo
+            echo "- Homebrew: \`brew install belingud/tap/gh-download\`"
             echo "- Cargo: \`cargo install gh-download\`"
             echo "- Prebuilt binary: download the archive matching your platform from the assets below."
             echo
-            echo "中文：可以通过 \`cargo install gh-download\` 安装，也可以从下方资产中下载对应平台的预编译二进制。"
+            echo "中文：可以通过 \`brew install belingud/tap/gh-download\` 或 \`cargo install gh-download\` 安装，也可以从下方资产中下载对应平台的预编译二进制。"
             echo
             echo "## Assets"
             echo

@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+use crate::error::AppError;
 
 use super::models::ContentItem;
 
@@ -90,6 +92,62 @@ pub fn relative_item_path(root_remote_path: &str, item_path: &str) -> String {
         .to_string()
 }
 
+pub(super) fn safe_directory_relative_item_path(
+    root_remote_path: &str,
+    item_path: &str,
+) -> Result<String, AppError> {
+    let relative_path = checked_relative_item_path(root_remote_path, item_path)?;
+    validate_relative_output_path(&relative_path)?;
+    Ok(relative_path)
+}
+
+fn checked_relative_item_path(root_remote_path: &str, item_path: &str) -> Result<String, AppError> {
+    let normalized_root = normalize_repo_path(root_remote_path);
+    if normalized_root.is_empty() {
+        return Ok(item_path.to_string());
+    }
+
+    let prefix = format!("{}/", normalized_root);
+    item_path
+        .strip_prefix(&prefix)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| unsafe_directory_metadata_path(item_path))
+}
+
+fn validate_relative_output_path(relative_path: &str) -> Result<(), AppError> {
+    if relative_path.is_empty() || relative_path.contains('\\') {
+        return Err(unsafe_directory_metadata_path(relative_path));
+    }
+
+    let path = Path::new(relative_path);
+    if path.is_absolute() {
+        return Err(unsafe_directory_metadata_path(relative_path));
+    }
+
+    let mut has_component = false;
+    for component in path.components() {
+        match component {
+            Component::Normal(_) => has_component = true,
+            Component::CurDir
+            | Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_) => {
+                return Err(unsafe_directory_metadata_path(relative_path));
+            }
+        }
+    }
+
+    if has_component {
+        Ok(())
+    } else {
+        Err(unsafe_directory_metadata_path(relative_path))
+    }
+}
+
+fn unsafe_directory_metadata_path(path: &str) -> AppError {
+    AppError::InvalidPath(format!("unsafe directory metadata path: {}", path))
+}
+
 pub(super) fn choose_file_target(
     local_target: &Path,
     remote_path: &str,
@@ -163,6 +221,48 @@ mod tests {
             relative_item_path("src", "src/nested/lib.rs"),
             "nested/lib.rs".to_string()
         );
+    }
+
+    #[test]
+    fn safe_directory_relative_item_path_accepts_nested_paths() {
+        assert_eq!(
+            safe_directory_relative_item_path("src", "src/nested/lib.rs")
+                .expect("path should be valid"),
+            "nested/lib.rs"
+        );
+    }
+
+    #[test]
+    fn safe_directory_relative_item_path_accepts_root_download_paths() {
+        assert_eq!(
+            safe_directory_relative_item_path("", "src/main.rs").expect("path should be valid"),
+            "src/main.rs"
+        );
+    }
+
+    #[test]
+    fn safe_directory_relative_item_path_rejects_parent_segments() {
+        assert!(safe_directory_relative_item_path("src", "src/../outside.rs").is_err());
+    }
+
+    #[test]
+    fn safe_directory_relative_item_path_rejects_absolute_paths() {
+        assert!(safe_directory_relative_item_path("", "/tmp/outside.rs").is_err());
+    }
+
+    #[test]
+    fn safe_directory_relative_item_path_rejects_separator_aliases() {
+        assert!(safe_directory_relative_item_path("src", "src\\nested\\lib.rs").is_err());
+    }
+
+    #[test]
+    fn safe_directory_relative_item_path_rejects_empty_paths() {
+        assert!(safe_directory_relative_item_path("", "").is_err());
+    }
+
+    #[test]
+    fn safe_directory_relative_item_path_rejects_paths_outside_remote_root() {
+        assert!(safe_directory_relative_item_path("src", "other/lib.rs").is_err());
     }
 
     #[test]
