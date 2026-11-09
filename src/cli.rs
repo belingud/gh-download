@@ -26,7 +26,7 @@ pub fn parse_cli_from_env() -> Cli {
     parse_cli_invocation_from_env().cli
 }
 
-pub fn parse_cli_invocation_from_env() -> CliInvocation {
+pub fn try_parse_cli_invocation_from_env() -> Result<CliInvocation, clap::Error> {
     let args: Vec<OsString> = env::args_os().collect();
     let language = detect_language_from_args_env_and_config(
         &args,
@@ -35,7 +35,26 @@ pub fn parse_cli_invocation_from_env() -> CliInvocation {
         env::var("LANG").ok().as_deref(),
     );
     let args = normalize_args_for_parsing(args);
-    parse_cli_invocation_from_args(args, language)
+    try_parse_cli_invocation_from_args(args, language)
+}
+
+pub fn parse_cli_invocation_from_env() -> CliInvocation {
+    try_parse_cli_invocation_from_env().unwrap_or_else(|error| error.exit())
+}
+
+pub fn try_parse_cli_invocation_from_args<I, T>(
+    args: I,
+    language: Language,
+) -> Result<CliInvocation, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    let args_vec: Vec<OsString> = args.into_iter().map(Into::into).collect();
+    let mut command = command_for_language(language);
+    let matches = command.try_get_matches_from_mut(args_vec)?;
+    let parsed = self::types::ParsedCli::from_arg_matches(&matches)?;
+    Ok(parsed.into())
 }
 
 pub fn parse_cli_from_args<I, T>(args: I, language: Language) -> Cli
@@ -51,14 +70,7 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let args_vec: Vec<OsString> = args.into_iter().map(Into::into).collect();
-    let mut command = command_for_language(language);
-    let matches = command
-        .try_get_matches_from_mut(args_vec)
-        .unwrap_or_else(|error| error.exit());
-    self::types::ParsedCli::from_arg_matches(&matches)
-        .unwrap_or_else(|error| error.exit())
-        .into()
+    try_parse_cli_invocation_from_args(args, language).unwrap_or_else(|error| error.exit())
 }
 
 fn normalize_args_for_parsing(mut args: Vec<OsString>) -> Vec<OsString> {
@@ -97,6 +109,7 @@ mod tests {
                 "--lang",
                 "zh",
                 "--overwrite",
+                "--keep-going",
                 "--json",
                 "--debug",
                 "--no-color",
@@ -119,6 +132,7 @@ mod tests {
         assert_eq!(invocation.explicit_concurrency, Some(8));
         assert_eq!(cli.language, Some(Language::Zh));
         assert!(cli.overwrite);
+        assert!(cli.keep_going);
         assert!(cli.json);
         assert!(cli.debug);
         assert!(cli.no_color);

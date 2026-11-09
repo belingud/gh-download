@@ -48,6 +48,8 @@ gh-download owner/repo src ./downloads
 - 支持下载单个文件
 - 支持递归下载整个目录
 - 支持通过 `--concurrency` 或 `-c` 并发下载目录中的文件
+- 目录枚举使用 Git Trees API，超过 Contents API 1,000 条限制的目录也能完整下载
+- 目录下载遇到单个文件失败时可使用 `--keep-going` 继续，并在最后汇总每个失败文件
 - 默认跳过本地已存在文件，并支持显式 `--overwrite`
 - 支持通过 `--ref` 指定分支、tag 或 commit
 - 支持把常用参数持久化到 `~/.config/gh-download/config.toml` 或显式 `--config` 文件
@@ -102,7 +104,7 @@ cargo build --release
 基本用法：
 
 ```bash
-gh-download <repo> <remote-path> <local-target> [--config <path>] [--ref <ref>] [--token <token>] [--api-base <url>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--json] [--lang <en|zh>] [--debug] [--no-color]
+gh-download <repo> <remote-path> <local-target> [--config <path>] [--ref <ref>] [--token <token>] [--api-base <url>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--keep-going] [--json] [--lang <en|zh>] [--debug] [--no-color]
 ```
 
 直接运行 `gh-download` 且不带参数时，会按当前生效语言显示帮助信息。
@@ -137,6 +139,12 @@ gh-download owner/repo src ./downloads -c 8
 
 ```bash
 gh-download owner/repo src ./downloads --overwrite
+
+目录下载时某个文件失败后继续并汇总全部失败：
+
+```bash
+gh-download owner/repo src ./downloads --keep-going
+```
 ```
 
 输出机器可读 JSON 结果：
@@ -184,10 +192,11 @@ gh-download owner/repo docs ./docs --config ./gh-download.toml
 - `--prefix-mode`: raw 下载前缀代理模式，`direct`、`fallback` 或 `prefer`。优先级依次是命令行、配置文件、`GH_DOWNLOAD_PREFIX_MODE`
 - `--concurrency`、`-c`: 目录下载时的最大并发文件数，最小为 `1`。会先读取配置文件，未设置时默认值为 `4`
 - `--overwrite`: 覆盖本地已存在文件，而不是默认跳过
+- `--keep-going`: 目录下载遇到单个文件失败后继续下载其余文件，最后汇总所有失败文件与部分统计
 - `--json`: 在 stdout 输出一个最终的机器可读 JSON 结果
 - `--lang`: 显式指定输出语言，支持 `en` 和 `zh`。未提供 `--lang` 时，配置文件 `lang` 优先于 locale 检测
 - `--debug`: 打印请求 URL、token 来源和策略选择的调试信息
-- `--no-color`: 关闭 ANSI 彩色输出
+- `--no-color`: 关闭 ANSI 彩色输出。未指定时，只有在 stdout 是交互式终端且未设置 `NO_COLOR` 时才使用颜色
 
 ### 配置文件
 
@@ -234,7 +243,8 @@ token = "xxxx"
 - `--prefix-mode fallback` 会在直连 raw 文件下载出现可重试失败后再走前缀代理；如果未显式设置代理基址，则使用内置的 `https://gh-proxy.com/`
 - `--prefix-mode prefer` 会先尝试前缀代理，再在失败后回退到直连 raw 文件 URL；如果未显式设置代理基址，则使用内置的 `https://gh-proxy.com/`
 - GitHub metadata API 请求不会发送到 `gh-proxy` 这类 URL 前缀式回退代理
-- 当请求带有 token 时，`gh-download` 不会把该凭据转发到公共回退代理
+- 当请求带有 token 且仓库为私有仓库时，文件内容通过带 token 鉴权的 Contents raw media type 下载，而不是先尝试匿名 raw URL，因此私有仓库下载不再为每个文件输出一次匿名 raw 失败警告
+- 即使配置了 token，匿名 raw URL 请求失败时仍然可以按 fallback 模式走前缀代理重试，因为这些请求不携带凭据；token 永远不会转发给代理
 - 当前缀代理重试被触发时，警告输出会打印完整生成的回退 URL，并自动打码其中可能包含的凭据
 
 ### 自定义 GitHub API base
@@ -246,7 +256,9 @@ token = "xxxx"
 
 ### 目录下载并发行为
 
-- 当命令行和配置文件都没有指定其他值时，目录下载会先枚举远端目录树，再以默认最多 `4` 个并发传输下载文件
+- 目录下载通过 GitHub Git Trees API 枚举远端子目录树；如果 GitHub 返回 `truncated`，会回退为逐子树请求，因此单目录超过 Contents API 1,000 条限制时仍能完整枚举
+- 未指定 `--ref` 时，目录下载会先解析仓库默认分支再进行枚举
+- 枚举完成后，目录下载以默认最多 `4` 个并发传输下载文件，除非命令行或配置文件另行指定
 - 可通过 `--concurrency <n>` 或 `-c <n>` 提高或降低目录下载时同时进行的文件数
 - 如果需要显式顺序模式，便于排障或降低资源占用，可使用 `--concurrency 1` 或 `-c 1`
 - 单文件下载也接受 `--concurrency` 和 `-c`，但最终仍只会下载一个解析出的文件目标
@@ -255,23 +267,27 @@ token = "xxxx"
 
 ### 本地写入行为
 
-- 默认会跳过本地已存在文件，而不是隐式覆盖
-- 如果希望替换本地已存在文件，可显式传入 `--overwrite`
+- 默认会跳过最终本地文件路径上已存在的条目（包括普通文件和符号链接），而不是隐式覆盖
+- 如果希望替换本地已存在条目，可显式传入 `--overwrite`
 - 这个规则同时适用于单文件下载和目录下载中的逐文件写入
-- 跳过判断只基于最终解析出的本地文件路径是否已存在，不会在该模式下比较文件内容
+- 如果最终本地文件路径是已存在的目录，会给出明确错误，而不是尝试替换
+- 本地目标以路径分隔符结尾时按目录语义处理：`gh-download owner/repo README.md ./downloads/` 会创建 `downloads/` 并把 `README.md` 写入其中
+- 跳过判断只基于最终解析出的本地路径是否已存在，不会在该模式下比较文件内容
 
 ### Debug 行为
 
 - `--debug` 和 `GH_DOWNLOAD_DEBUG` 会开启流程级调试输出
-- 调试输出包含生成的 GitHub metadata URL、识别到的 token 来源标签、解析出的 raw 下载 URL、适用时生成的前缀代理 URL，以及当前选择的 raw 下载策略
+- 调试输出包含生成的 GitHub metadata URL、识别到的 token 来源标签、仓库是否私有、目录下载使用的 Git Trees URL 与枚举模式、解析出的 raw 下载 URL、适用时生成的前缀代理 URL，以及当前选择的 raw 下载策略
 - 调试输出写到 `stderr`，不会改变下载行为
 
 ### JSON 输出
 
 - `--json` 会把 stdout 切换成一个最终的机器可读 JSON 文档，而不是默认的人类可读启动、进度、完成或错误文本
 - JSON 成功结果包含 `success`、`saved_path` 和聚合下载统计信息
-- JSON 失败结果会在 `error` 对象下包含 `title`、`reason` 和 `suggestions`
+- JSON 失败结果会在 `error` 对象下包含稳定的、与语言无关的 `code`，以及 `title`、`reason` 和 `suggestions`
+- 目录传输失败还会包含部分 `stats` 与 `failed` 数组，逐项列出失败的远端路径、本地路径和原因
 - 即使消息文本跟随当前生效语言，JSON 字段名也保持稳定的英文标识
+- `--json` 同样适用于参数校验失败：CLI 会输出 `code` 为 `usage` 的 JSON 失败文档，并保持参数错误的退出码
 - 如果同时开启 `--json` 和 `--debug`，JSON 保持在 stdout，debug 诊断信息继续输出到 stderr
 
 ### CI 与发布

@@ -28,7 +28,8 @@ pub(crate) fn resolve_cli_with_config(
         return Err(AppError::EmptyRemotePath);
     }
 
-    let local_target = resolve_local_target(&cli.local_target)?;
+    let (local_target, local_target_is_dir_hint) =
+        resolve_local_target_with_hint(&cli.local_target)?;
     let prefix_mode = resolve_prefix_mode(
         cli.prefix_mode,
         config.as_ref().and_then(|value| value.prefix_mode),
@@ -65,6 +66,7 @@ pub(crate) fn resolve_cli_with_config(
         repo: cli.repo.trim().to_string(),
         remote_path: cli.remote_path.trim().to_string(),
         local_target,
+        local_target_is_dir_hint,
         git_ref: cli.git_ref.map(|value| value.trim().to_string()),
         token,
         api_base,
@@ -76,6 +78,7 @@ pub(crate) fn resolve_cli_with_config(
         ),
         language,
         overwrite: cli.overwrite,
+        keep_going: cli.keep_going,
         json: cli.json,
         debug,
         no_color: cli.no_color,
@@ -188,15 +191,27 @@ pub fn resolve_language(
 }
 
 pub fn resolve_local_target(path: &Path) -> Result<PathBuf, AppError> {
+    resolve_local_target_with_hint(path).map(|(target, _)| target)
+}
+
+pub(crate) fn resolve_local_target_with_hint(path: &Path) -> Result<(PathBuf, bool), AppError> {
+    let dir_hint = has_trailing_separator(path);
     let expanded = expand_home(path)?;
-    if expanded.is_absolute() {
-        Ok(normalize_path_lexically(&expanded))
+    let target = if expanded.is_absolute() {
+        normalize_path_lexically(&expanded)
     } else {
         env::current_dir()
             .map(|current| current.join(expanded))
             .map(|joined| normalize_path_lexically(&joined))
-            .map_err(|err| AppError::InvalidPath(err.to_string()))
-    }
+            .map_err(|err| AppError::InvalidPath(err.to_string()))?
+    };
+
+    Ok((target, dir_hint))
+}
+
+fn has_trailing_separator(path: &Path) -> bool {
+    let raw = path.as_os_str().to_string_lossy();
+    raw.ends_with('/') || (cfg!(windows) && raw.ends_with('\\'))
 }
 
 fn normalize_path_lexically(path: &Path) -> PathBuf {
@@ -475,6 +490,7 @@ mod tests {
             concurrency: 4,
             language: None,
             overwrite: false,
+            keep_going: false,
             json: false,
             debug: false,
             no_color: true,
@@ -517,6 +533,7 @@ mod tests {
             concurrency: 8,
             language: Some(Language::En),
             overwrite: true,
+            keep_going: false,
             json: true,
             debug: false,
             no_color: true,
@@ -543,6 +560,7 @@ mod tests {
             concurrency: 12,
             language: Some(Language::En),
             overwrite: false,
+            keep_going: false,
             json: false,
             debug: false,
             no_color: true,
@@ -568,5 +586,23 @@ mod tests {
             resolve_local_target(Path::new("/tmp/./gh-download/../target")).expect("absolute"),
             PathBuf::from("/tmp/target")
         );
+    }
+
+    #[test]
+    fn trailing_separator_sets_directory_hint() {
+        let (target, hint) =
+            resolve_local_target_with_hint(Path::new("./downloads/")).expect("target");
+
+        assert_eq!(target, env::current_dir().expect("cwd").join("downloads"));
+        assert!(hint);
+    }
+
+    #[test]
+    fn plain_target_does_not_set_directory_hint() {
+        let (target, hint) =
+            resolve_local_target_with_hint(Path::new("./downloads")).expect("target");
+
+        assert_eq!(target, env::current_dir().expect("cwd").join("downloads"));
+        assert!(!hint);
     }
 }

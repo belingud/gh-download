@@ -81,6 +81,9 @@ pub(crate) struct ParsedCli {
     pub overwrite: bool,
 
     #[arg(long, action = ArgAction::SetTrue)]
+    pub keep_going: bool,
+
+    #[arg(long, action = ArgAction::SetTrue)]
     pub json: bool,
 
     #[arg(long, action = ArgAction::SetTrue)]
@@ -140,6 +143,9 @@ pub struct Cli {
     pub overwrite: bool,
 
     #[arg(long, action = ArgAction::SetTrue)]
+    pub keep_going: bool,
+
+    #[arg(long, action = ArgAction::SetTrue)]
     pub json: bool,
 
     #[arg(long, action = ArgAction::SetTrue)]
@@ -154,6 +160,7 @@ pub struct ResolvedOptions {
     pub repo: String,
     pub remote_path: String,
     pub local_target: PathBuf,
+    pub local_target_is_dir_hint: bool,
     pub git_ref: Option<String>,
     pub token: Option<String>,
     pub api_base: String,
@@ -162,6 +169,7 @@ pub struct ResolvedOptions {
     pub concurrency: usize,
     pub language: Language,
     pub overwrite: bool,
+    pub keep_going: bool,
     pub json: bool,
     pub debug: bool,
     pub no_color: bool,
@@ -182,6 +190,7 @@ impl From<ParsedCli> for CliInvocation {
             concurrency: explicit_concurrency.unwrap_or(DEFAULT_DOWNLOAD_CONCURRENCY),
             language: value.language,
             overwrite: value.overwrite,
+            keep_going: value.keep_going,
             json: value.json,
             debug: value.debug,
             no_color: value.no_color,

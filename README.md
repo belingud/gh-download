@@ -48,6 +48,8 @@ gh-download owner/repo src ./downloads
 - Download a single file
 - Download a directory recursively
 - Download directory files concurrently with `--concurrency` or `-c`
+- Enumerate directories through the Git Trees API so directories larger than the Contents API 1,000-entry limit are downloaded completely
+- Continue a directory transfer after per-file failures with `--keep-going` and get a per-file failure report
 - Skip existing local files by default, with explicit `--overwrite` support
 - Choose a branch, tag, or commit with `--ref`
 - Persist common defaults in `~/.config/gh-download/config.toml` or an explicit `--config` file
@@ -102,7 +104,7 @@ The compiled binary will be available at:
 Basic syntax:
 
 ```bash
-gh-download <repo> <remote-path> <local-target> [--config <path>] [--ref <ref>] [--token <token>] [--api-base <url>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--json] [--lang <en|zh>] [--debug] [--no-color]
+gh-download <repo> <remote-path> <local-target> [--config <path>] [--ref <ref>] [--token <token>] [--api-base <url>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--keep-going] [--json] [--lang <en|zh>] [--debug] [--no-color]
 ```
 
 Run `gh-download` without arguments to show the help screen in the effective language.
@@ -137,6 +139,12 @@ Overwrite existing local files explicitly:
 
 ```bash
 gh-download owner/repo src ./downloads --overwrite
+
+Continue a directory transfer after a file fails and collect every failure:
+
+```bash
+gh-download owner/repo src ./downloads --keep-going
+```
 ```
 
 Emit a machine-readable JSON result:
@@ -184,10 +192,11 @@ gh-download owner/repo docs ./docs --config ./gh-download.toml
 - `--prefix-mode`: Raw download prefix-proxy mode, `direct`, `fallback`, or `prefer`. Precedence: CLI, config file, then `GH_DOWNLOAD_PREFIX_MODE`
 - `--concurrency`, `-c`: Maximum number of concurrent file downloads for directory transfers. Must be at least `1`; reads config file first and otherwise defaults to `4`
 - `--overwrite`: Replace existing local files instead of skipping them
+- `--keep-going`: Continue a directory transfer after a file failure, then report every failed file and the partial statistics
 - `--json`: Emit one final machine-readable JSON result on stdout
 - `--lang`: Explicit output language, `en` or `zh`. Without `--lang`, config file `lang` overrides locale detection
 - `--debug`: Print debug diagnostics for request URLs, token source, and strategy selection
-- `--no-color`: Disable ANSI color output
+- `--no-color`: Disable ANSI color output. Without this flag, color is used only when stdout is an interactive terminal and `NO_COLOR` is unset
 
 ### Config file
 
@@ -234,7 +243,8 @@ If you store a token in the config file, keep the file permissions appropriately
 - `--prefix-mode fallback` retries a raw file download through the prefix proxy after a retryable direct-download failure, using the built-in `https://gh-proxy.com/` when no explicit proxy base is set
 - `--prefix-mode prefer` tries the prefix proxy first and falls back to the direct raw file URL if the prefix attempt fails, using the built-in `https://gh-proxy.com/` when no explicit proxy base is set
 - GitHub metadata API requests are not sent through URL-prefix fallback proxies such as `gh-proxy`
-- When a token is present, `gh-download` will not forward that credential to the public fallback proxy
+- When a token is present and the repository is private, file bytes are downloaded through the token-authenticated Contents raw media type instead of first attempting an anonymous raw URL, so private-repository downloads no longer emit a failed anonymous raw attempt per file
+- Prefix-proxy retries apply to anonymous raw URL attempts even when a token is configured, because those attempts carry no credential, and the token is never forwarded to the proxy
 - When prefix retry is used, the warning output prints the full generated fallback URL with any embedded credentials redacted
 
 ### Custom GitHub API base
@@ -246,7 +256,9 @@ If you store a token in the config file, keep the file permissions appropriately
 
 ### Directory download concurrency
 
-- Directory downloads enumerate the remote tree first, then download files with up to `4` concurrent transfers by default when neither CLI nor config specifies another value
+- Directory downloads enumerate the remote subtree with the GitHub Git Trees API; when GitHub reports a truncated tree response, the CLI falls back to per-subtree tree requests so a directory with more than the Contents API 1,000-entry limit is still enumerated completely
+- When `--ref` is omitted, directory downloads resolve the repository default branch before enumerating
+- Directory downloads then download files with up to `4` concurrent transfers by default when neither CLI nor config specifies another value
 - Use `--concurrency <n>` or `-c <n>` to raise or lower the maximum number of in-flight file downloads for a directory transfer
 - Use `--concurrency 1` or `-c 1` if you want an explicit sequential mode for troubleshooting or low-resource environments
 - Single-file downloads accept `--concurrency` and `-c`, but still download only one resolved file target
@@ -255,23 +267,27 @@ If you store a token in the config file, keep the file permissions appropriately
 
 ### Local write behavior
 
-- Existing local files are skipped by default instead of being overwritten implicitly
-- Pass `--overwrite` if you want the CLI to replace existing local files
+- Existing entries at the resolved local file target are skipped by default instead of being overwritten implicitly; this includes regular files and symbolic links
+- Pass `--overwrite` if you want the CLI to replace existing local entries
 - The same rule applies to direct file downloads and to per-file writes inside directory downloads
-- Skip decisions are based on whether the resolved local file target already exists; the CLI does not compare file contents in this mode
+- A directory at the resolved local file target is reported as an error instead of being replaced
+- A trailing separator on the local target means directory intent: `gh-download owner/repo README.md ./downloads/` creates `downloads/` and writes `README.md` inside it
+- Skip decisions are based on whether an entry already exists at the resolved local file target; the CLI does not compare file contents in this mode
 
 ### Debug behavior
 
 - `--debug` and `GH_DOWNLOAD_DEBUG` enable flow-level diagnostics
-- Debug output includes the generated GitHub metadata URL, the detected token source label, the resolved raw download URL, the generated prefix URL when applicable, and the selected raw download strategy
+- Debug output includes the generated GitHub metadata URL, the detected token source label, the resolved repository privacy, the Git Trees metadata URL and enumeration mode for directory transfers, the resolved raw download URL, the generated prefix URL when applicable, and the selected raw download strategy
 - Debug output is written to `stderr` and does not change download behavior
 
 ### JSON output
 
 - `--json` switches stdout to one final machine-readable JSON document instead of the default human-readable startup, progress, completion, or error text
 - JSON success output includes `success`, `saved_path`, and aggregate download statistics
-- JSON failure output includes `success`, `title`, `reason`, and `suggestions` under an `error` object
+- JSON failure output includes `success`, and under `error` a stable language-independent `code`, `title`, `reason`, and `suggestions`
+- Directory transfer failures also include partial `stats` and a `failed` array with one entry per failed remote path, local path, and reason
 - JSON field names are stable English identifiers even when the message text follows the effective language
+- `--json` also applies to argument-validation failures: the CLI emits a JSON failure document with code `usage` and keeps the usage exit status
 - If `--json` and `--debug` are enabled together, JSON stays on stdout and debug diagnostics stay on stderr
 
 ### CI and releases

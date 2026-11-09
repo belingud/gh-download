@@ -20,11 +20,10 @@ impl RawDownloadStrategy {
 
 pub(super) fn should_attempt_prefix_proxy(
     prefix_mode: PrefixProxyMode,
-    token_present: bool,
     proxy_base: &str,
     error: &AppError,
 ) -> bool {
-    if prefix_mode != PrefixProxyMode::Fallback || token_present || proxy_base.trim().is_empty() {
+    if prefix_mode != PrefixProxyMode::Fallback || proxy_base.trim().is_empty() {
         return false;
     }
 
@@ -34,5 +33,54 @@ pub(super) fn should_attempt_prefix_proxy(
         }
         AppError::Request { .. } => true,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn http_error(status: u16) -> AppError {
+        AppError::HttpStatus {
+            status,
+            url: "https://raw.githubusercontent.com".to_string(),
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn fallback_mode_retries_retryable_anonymous_raw_errors() {
+        assert!(should_attempt_prefix_proxy(
+            PrefixProxyMode::Fallback,
+            "https://gh-proxy.com/",
+            &http_error(503)
+        ));
+        assert!(should_attempt_prefix_proxy(
+            PrefixProxyMode::Fallback,
+            "https://gh-proxy.com/",
+            &AppError::Request {
+                url: None,
+                message: "connection reset".to_string(),
+            }
+        ));
+    }
+
+    #[test]
+    fn fallback_mode_skips_non_retryable_or_unconfigured_cases() {
+        assert!(!should_attempt_prefix_proxy(
+            PrefixProxyMode::Fallback,
+            "https://gh-proxy.com/",
+            &http_error(404)
+        ));
+        assert!(!should_attempt_prefix_proxy(
+            PrefixProxyMode::Direct,
+            "https://gh-proxy.com/",
+            &http_error(503)
+        ));
+        assert!(!should_attempt_prefix_proxy(
+            PrefixProxyMode::Fallback,
+            "  ",
+            &http_error(503)
+        ));
     }
 }

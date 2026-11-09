@@ -1,7 +1,7 @@
 ---
 name: gh-download
 description: Use this skill when you need to download a single file or a whole directory from a GitHub repository path with the gh-download CLI, including installation checks, config-file defaults, private-repo token usage, GitHub Enterprise API base support, prefix-proxy modes, and machine-readable JSON output.
-version: 0.5.0
+version: 0.5.1
 metadata:
   openclaw:
     homepage: https://github.com/belingud/gh-download
@@ -28,7 +28,10 @@ Typical use cases:
 
 - For single-file downloads, the local target can be either a file path or an existing directory such as `.`.
 - For directory downloads, the remote relative path structure is preserved. In most cases, the tool creates a same-named directory under the local target unless the local target already ends with that directory name.
-- Existing local files are not overwritten by default. Use `--overwrite` explicitly if replacement is intended.
+- Existing local entries (files or symlinks) are not overwritten by default. Use `--overwrite` explicitly if replacement is intended.
+- Directory enumeration uses the GitHub Git Trees API, so directories above the Contents API 1,000-entry limit are enumerated completely. When `--ref` is omitted, the default branch is resolved first.
+- With a token and a private repository, file bytes are downloaded through the token-authenticated Contents raw media type instead of a doomed anonymous raw attempt.
+- `--json` failures include a stable `error.code`; directory transfer failures also include partial `stats` and a `failed` array.
 - Raw file downloads can use prefix-proxy modes, but GitHub metadata API requests must not go through URL-prefix proxies such as `gh-proxy`.
 - When a token is present, authentication credentials are not forwarded to a public prefix proxy.
 - `--json` switches `stdout` to a single final JSON document. If `--debug` is also enabled, debug output still goes to `stderr`.
@@ -101,6 +104,7 @@ Positional arguments:
 - `--prefix-mode <direct|fallback|prefer>`: Specify the raw download prefix-proxy mode. The default is `direct`
 - `--concurrency <n>` or `-c <n>`: Specify the maximum number of concurrent file downloads for directory transfers. Minimum `1`, default `4`
 - `--overwrite`: Overwrite existing local files
+- `--keep-going`: Continue a directory transfer after a file failure and report every failed file
 - `--json`: Emit the final result as JSON
 - `--lang <en|zh>`: Explicitly set the output language
 - `--debug`: Print request URLs, token source, and download strategy for debugging

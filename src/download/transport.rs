@@ -1,6 +1,6 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -36,6 +36,10 @@ pub(super) fn send_request(
     accept: Option<&str>,
     token: Option<&str>,
 ) -> Result<Response, AppError> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(AppError::InvalidUrl(url.to_string()));
+    }
+
     let mut request = client.get(url).header(USER_AGENT, USER_AGENT_VALUE);
     if let Some(accept) = accept {
         request = request.header(ACCEPT, accept);
@@ -89,12 +93,13 @@ pub(super) fn stream_download(
     }
 
     let response = send_request(client, url, accept, token)?;
-    copy_reader_to_target_atomically(response, local_target)
+    copy_reader_to_target_atomically(response, local_target, url)
 }
 
 fn copy_reader_to_target_atomically<R: Read>(
     mut reader: R,
     local_target: &Path,
+    url: &str,
 ) -> Result<(), AppError> {
     if let Some(parent) = local_target.parent() {
         fs::create_dir_all(parent).map_err(|source| AppError::Io {
@@ -104,13 +109,29 @@ fn copy_reader_to_target_atomically<R: Read>(
     }
 
     let (temporary_target, mut file) = create_temporary_file(local_target)?;
-    if let Err(source) = io::copy(&mut reader, &mut file) {
-        drop(file);
-        let _ = fs::remove_file(&temporary_target);
-        return Err(AppError::Io {
-            path: local_target.to_path_buf(),
-            source,
-        });
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(source) => {
+                drop(file);
+                let _ = fs::remove_file(&temporary_target);
+                return Err(AppError::Transfer {
+                    path: local_target.to_path_buf(),
+                    message: format!("{} ({})", source, url),
+                });
+            }
+        };
+
+        if let Err(source) = file.write_all(&buffer[..read]) {
+            drop(file);
+            let _ = fs::remove_file(&temporary_target);
+            return Err(AppError::Io {
+                path: local_target.to_path_buf(),
+                source,
+            });
+        }
     }
     drop(file);
 
@@ -249,8 +270,12 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let target = dir.path().join("README.md");
 
-        copy_reader_to_target_atomically("new body".as_bytes(), &target)
-            .expect("copy should succeed");
+        copy_reader_to_target_atomically(
+            "new body".as_bytes(),
+            &target,
+            "http://example.invalid/file",
+        )
+        .expect("copy should succeed");
 
         assert_eq!(fs::read_to_string(target).expect("target"), "new body");
     }
@@ -261,8 +286,12 @@ mod tests {
         let target = dir.path().join("README.md");
         fs::write(&target, "old body").expect("seed target");
 
-        copy_reader_to_target_atomically("new body".as_bytes(), &target)
-            .expect("copy should succeed");
+        copy_reader_to_target_atomically(
+            "new body".as_bytes(),
+            &target,
+            "http://example.invalid/file",
+        )
+        .expect("copy should succeed");
 
         assert_eq!(fs::read_to_string(target).expect("target"), "new body");
     }
@@ -272,8 +301,12 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let target = dir.path().join("README.md");
 
-        copy_reader_to_target_atomically(FailingReader::new("partial"), &target)
-            .expect_err("copy should fail");
+        copy_reader_to_target_atomically(
+            FailingReader::new("partial"),
+            &target,
+            "http://example.invalid/file",
+        )
+        .expect_err("copy should fail");
 
         assert!(!target.exists(), "target should not be created");
         assert!(
@@ -291,8 +324,12 @@ mod tests {
         let target = dir.path().join("README.md");
         fs::write(&target, "old body").expect("seed target");
 
-        copy_reader_to_target_atomically(FailingReader::new("partial"), &target)
-            .expect_err("copy should fail");
+        copy_reader_to_target_atomically(
+            FailingReader::new("partial"),
+            &target,
+            "http://example.invalid/file",
+        )
+        .expect_err("copy should fail");
 
         assert_eq!(fs::read_to_string(&target).expect("target"), "old body");
         let entries = fs::read_dir(dir.path())

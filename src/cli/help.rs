@@ -27,6 +27,7 @@ pub fn command_for_language(language: Language) -> clap::Command {
         .mut_arg("concurrency", |arg| arg.help(concurrency_help(language)))
         .mut_arg("language", |arg| arg.help(language_help(language)))
         .mut_arg("overwrite", |arg| arg.help(overwrite_help(language)))
+        .mut_arg("keep_going", |arg| arg.help(keep_going_help(language)))
         .mut_arg("json", |arg| arg.help(json_help(language)))
         .mut_arg("debug", |arg| arg.help(debug_help(language)))
         .mut_arg("no_color", |arg| arg.help(no_color_help(language)));
@@ -44,10 +45,10 @@ fn command_about(language: Language) -> &'static str {
 fn command_after_help(language: Language) -> &'static str {
     match language {
         Language::En => {
-            "Examples:\n  gh-download openai/openai-python README.md .\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo README.md . --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh\n  gh-download owner/repo docs ./docs --config ./gh-download.toml"
+            "Examples:\n  gh-download openai/openai-python README.md .\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo src ./downloads --keep-going\n  gh-download owner/repo README.md . --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh\n  gh-download owner/repo docs ./docs --config ./gh-download.toml"
         }
         Language::Zh => {
-            "示例:\n  gh-download openai/openai-python README.md .\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo README.md . --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh\n  gh-download owner/repo docs ./docs --config ./gh-download.toml"
+            "示例:\n  gh-download openai/openai-python README.md .\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo src ./downloads --keep-going\n  gh-download owner/repo README.md . --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh\n  gh-download owner/repo docs ./docs --config ./gh-download.toml"
         }
     }
 }
@@ -164,6 +165,15 @@ fn overwrite_help(language: Language) -> &'static str {
     }
 }
 
+fn keep_going_help(language: Language) -> &'static str {
+    match language {
+        Language::En => {
+            "Continue downloading remaining directory files after a failure, then report every failed file"
+        }
+        Language::Zh => "某个文件失败后继续下载目录中的其余文件，最后汇总所有失败文件",
+    }
+}
+
 fn json_help(language: Language) -> &'static str {
     match language {
         Language::En => "Emit one final machine-readable JSON result on stdout",
@@ -217,6 +227,7 @@ mod tests {
         assert!(rendered.contains("--api-base"));
         assert!(rendered.contains("--config"));
         assert!(rendered.contains("--overwrite"));
+        assert!(rendered.contains("--keep-going"));
         assert!(rendered.contains("--json"));
     }
 

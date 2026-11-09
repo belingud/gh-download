@@ -23,6 +23,18 @@ pub fn quote_repo_path(path: &str) -> String {
         .join("/")
 }
 
+pub const DEFAULT_RAW_BASE: &str = "https://raw.githubusercontent.com";
+
+pub fn build_raw_file_url(repo: &str, rev: &str, repo_path: &str) -> String {
+    format!(
+        "{}/{}/{}/{}",
+        DEFAULT_RAW_BASE,
+        repo.trim_matches('/'),
+        rev.trim_matches('/'),
+        quote_repo_path(repo_path)
+    )
+}
+
 pub fn join_proxy_url(proxy_base: &str, target_url: &str) -> String {
     format!("{}/{}", proxy_base.trim_end_matches('/'), target_url)
 }
@@ -152,16 +164,56 @@ pub(super) fn choose_file_target(
     local_target: &Path,
     remote_path: &str,
     item: &ContentItem,
-) -> PathBuf {
-    let filename = item
-        .name
-        .clone()
-        .unwrap_or_else(|| file_name_from_remote_path(remote_path));
-    if local_target.exists() && local_target.is_dir() {
-        local_target.join(filename)
-    } else {
-        local_target.to_path_buf()
+    dir_hint: bool,
+) -> Result<PathBuf, AppError> {
+    let filename = validated_metadata_file_name(item.name.as_deref(), remote_path)?;
+    if local_target.exists() {
+        if local_target.is_dir() {
+            return Ok(local_target.join(filename));
+        }
+        if dir_hint {
+            return Err(AppError::InvalidPath(format!(
+                "local target has a trailing separator but exists as a file: {}",
+                local_target.display()
+            )));
+        }
+        return Ok(local_target.to_path_buf());
     }
+
+    if dir_hint {
+        Ok(local_target.join(filename))
+    } else {
+        Ok(local_target.to_path_buf())
+    }
+}
+
+pub(super) fn validated_metadata_file_name(
+    metadata_name: Option<&str>,
+    remote_path: &str,
+) -> Result<String, AppError> {
+    if let Some(name) = metadata_name.filter(|name| is_safe_file_name(name)) {
+        return Ok(name.to_string());
+    }
+
+    let fallback = file_name_from_remote_path(remote_path);
+    if is_safe_file_name(&fallback) {
+        Ok(fallback)
+    } else {
+        Err(AppError::InvalidPath(format!(
+            "unsafe metadata file name {:?} for remote path {:?}",
+            metadata_name.unwrap_or(""),
+            remote_path
+        )))
+    }
+}
+
+fn is_safe_file_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains('\0')
 }
 
 pub fn choose_directory_target(local_target: &Path, remote_path: &str) -> PathBuf {
@@ -274,6 +326,39 @@ mod tests {
         assert_eq!(
             redact_url_for_display("https://gh-proxy.com/https://api.github.com"),
             "https://gh-proxy.com/https://api.github.com"
+        );
+    }
+
+    #[test]
+    fn validated_metadata_file_name_accepts_safe_names() {
+        assert_eq!(
+            validated_metadata_file_name(Some("README.md"), "README.md").expect("safe"),
+            "README.md"
+        );
+    }
+
+    #[test]
+    fn validated_metadata_file_name_rejects_traversal_and_falls_back() {
+        assert_eq!(
+            validated_metadata_file_name(Some("../../etc/passwd"), "docs/config.toml")
+                .expect("fallback"),
+            "config.toml"
+        );
+        assert_eq!(
+            validated_metadata_file_name(Some(".."), "..").expect("fallback"),
+            "downloaded-file"
+        );
+    }
+
+    #[test]
+    fn raw_file_url_encodes_repo_path_segments() {
+        assert_eq!(
+            build_raw_file_url("owner/repo", "main", "src/a b/c.rs"),
+            "https://raw.githubusercontent.com/owner/repo/main/src/a%20b/c.rs"
+        );
+        assert_eq!(
+            build_raw_file_url("/owner/repo/", "abc123", "/README.md"),
+            "https://raw.githubusercontent.com/owner/repo/abc123/README.md"
         );
     }
 }

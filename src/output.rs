@@ -1,9 +1,11 @@
 use crate::cli::ResolvedOptions;
 use crate::download::DownloadStats;
 use crate::download::format_remote_path;
-use crate::error::UserFacingError;
+use crate::error::{FailureDetails, UserFacingError};
 use crate::i18n::Language;
 use serde::Serialize;
+use std::env;
+use std::io::IsTerminal;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -23,6 +25,16 @@ impl Output {
             json_mode: false,
             io_lock: Arc::new(Mutex::new(())),
         }
+    }
+
+    pub fn color_enabled(no_color: bool) -> bool {
+        if no_color {
+            return false;
+        }
+        if env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()) {
+            return false;
+        }
+        std::io::stdout().is_terminal()
     }
 
     pub fn with_json_mode(mut self) -> Self {
@@ -178,7 +190,17 @@ impl Output {
     }
 
     pub fn print_json_error(&self, error: &UserFacingError) {
-        self.print_stdout_line(&self.render_json_error(error));
+        self.print_json_failure(
+            error,
+            &FailureDetails {
+                failed: Vec::new(),
+                stats: None,
+            },
+        );
+    }
+
+    pub fn print_json_failure(&self, error: &UserFacingError, details: &FailureDetails) {
+        self.print_stdout_line(&self.render_json_failure(error, details));
     }
 
     fn label_repository(&self) -> &'static str {
@@ -338,14 +360,29 @@ impl Output {
         .expect("json success payload")
     }
 
-    fn render_json_error(&self, error: &UserFacingError) -> String {
+    fn render_json_failure(&self, error: &UserFacingError, details: &FailureDetails) -> String {
         serde_json::to_string_pretty(&JsonFailurePayload {
             success: false,
             error: JsonErrorPayload {
+                code: error.code.to_string(),
                 title: error.title.clone(),
                 reason: error.reason.clone(),
                 suggestions: error.suggestions.clone(),
             },
+            stats: details.stats.map(|stats| JsonStats {
+                files_downloaded: stats.downloaded,
+                skipped_existing_files: stats.skipped_existing,
+                skipped_unsupported_entries: stats.skipped_entries,
+            }),
+            failed: details
+                .failed
+                .iter()
+                .map(|failure| JsonFailedEntry {
+                    path: failure.path.clone(),
+                    local_path: failure.local_path.clone(),
+                    reason: failure.reason.clone(),
+                })
+                .collect(),
         })
         .expect("json failure payload")
     }
@@ -393,10 +430,22 @@ struct JsonStats {
 struct JsonFailurePayload {
     success: bool,
     error: JsonErrorPayload,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stats: Option<JsonStats>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    failed: Vec<JsonFailedEntry>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct JsonFailedEntry {
+    path: String,
+    local_path: String,
+    reason: String,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 struct JsonErrorPayload {
+    code: String,
     title: String,
     reason: String,
     suggestions: Vec<String>,
@@ -491,18 +540,61 @@ mod tests {
     fn json_failure_payload_includes_classified_error_fields() {
         let output = Output::new(false, Language::En).with_json_mode();
         let error = UserFacingError {
+            code: "usage",
             title: "✖ Download failed".to_string(),
             reason: "boom".to_string(),
             suggestions: vec!["retry".to_string()],
         };
 
-        let value: Value =
-            serde_json::from_str(&output.render_json_error(&error)).expect("valid json");
+        let value: Value = serde_json::from_str(&output.render_json_failure(
+            &error,
+            &FailureDetails {
+                failed: Vec::new(),
+                stats: None,
+            },
+        ))
+        .expect("valid json");
 
         assert_eq!(value["success"], false);
+        assert_eq!(value["error"]["code"], "usage");
         assert_eq!(value["error"]["title"], "✖ Download failed");
         assert_eq!(value["error"]["reason"], "boom");
         assert_eq!(value["error"]["suggestions"][0], "retry");
+    }
+
+    #[test]
+    fn json_failure_payload_includes_partial_stats_and_failed_entries() {
+        use crate::error::{FailedFile, PartialStats};
+
+        let output = Output::new(false, Language::En).with_json_mode();
+        let error = UserFacingError {
+            code: "partial_transfer",
+            title: "✖ Directory download failed".to_string(),
+            reason: "1 file(s) failed to download".to_string(),
+            suggestions: vec!["retry".to_string()],
+        };
+        let details = FailureDetails {
+            failed: vec![FailedFile {
+                path: "src/b.rs".to_string(),
+                local_path: "/tmp/out/src/b.rs".to_string(),
+                reason: "HTTP 503".to_string(),
+            }],
+            stats: Some(PartialStats {
+                downloaded: 2,
+                skipped_existing: 1,
+                skipped_entries: 0,
+            }),
+        };
+
+        let value: Value =
+            serde_json::from_str(&output.render_json_failure(&error, &details)).expect("json");
+
+        assert_eq!(value["success"], false);
+        assert_eq!(value["error"]["code"], "partial_transfer");
+        assert_eq!(value["stats"]["files_downloaded"], 2);
+        assert_eq!(value["stats"]["skipped_existing_files"], 1);
+        assert_eq!(value["failed"][0]["path"], "src/b.rs");
+        assert_eq!(value["failed"][0]["reason"], "HTTP 503");
     }
 
     #[test]
@@ -545,6 +637,7 @@ mod tests {
             repo: "owner/repo".to_string(),
             remote_path: "README.md".to_string(),
             local_target: Path::new("/tmp/output.json").to_path_buf(),
+            local_target_is_dir_hint: false,
             git_ref: None,
             token: None,
             api_base: crate::DEFAULT_GITHUB_API_BASE.to_string(),
@@ -553,6 +646,7 @@ mod tests {
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            keep_going: false,
             json: true,
             debug: true,
             no_color: true,

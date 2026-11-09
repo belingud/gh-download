@@ -8,14 +8,18 @@ pub use cli::{
     Cli, CliInvocation, PrefixProxyMode, ResolvedOptions, command, command_for_language,
     parse_cli_from_args, parse_cli_from_env, parse_cli_invocation_from_args,
     parse_cli_invocation_from_env, pick_token, resolve_cli, resolve_debug, resolve_local_target,
-    resolve_prefix_mode, resolve_proxy_base,
+    resolve_prefix_mode, resolve_proxy_base, try_parse_cli_invocation_from_args,
+    try_parse_cli_invocation_from_env,
 };
 pub use download::{
     DEFAULT_GH_PROXY, DEFAULT_GITHUB_API_BASE, DownloadStats, RunOutcome, Runner, RuntimeConfig,
     build_contents_api_url, choose_directory_target, format_remote_path, join_proxy_url,
     normalize_repo_path, relative_item_path,
 };
-pub use error::{AppError, UserFacingError, classify_error};
+pub use error::{
+    AppError, FailedFile, FailureDetails, PartialStats, UserFacingError, classify_error,
+    classify_parse_error, failure_details,
+};
 pub use i18n::{Language, detect_language_from_args_and_env};
 pub use output::Output;
 
@@ -76,9 +80,9 @@ pub fn run_cli_invocation(invocation: CliInvocation) -> Result<RunOutcome, AppEr
         invocation.explicit_concurrency,
     )?;
     let output = if options.json {
-        Output::new(!options.no_color, options.language).with_json_mode()
+        Output::new(false, options.language).with_json_mode()
     } else {
-        Output::new(!options.no_color, options.language)
+        Output::new(Output::color_enabled(options.no_color), options.language)
     };
     output.startup(&options);
     if options.debug {

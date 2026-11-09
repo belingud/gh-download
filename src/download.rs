@@ -2,16 +2,18 @@ mod models;
 mod paths;
 mod raw;
 mod transport;
+mod tree;
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
 
 use reqwest::blocking::Client;
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::cli::{PrefixProxyMode, ResolvedOptions};
-use crate::error::AppError;
+use crate::error::{AppError, FailedFile, PartialStats};
 use crate::i18n::Language;
 use crate::output::Output;
 
@@ -21,11 +23,12 @@ pub use self::paths::{
     normalize_repo_path, relative_item_path,
 };
 use self::paths::{
-    choose_file_target, file_name_from_remote_path, redact_url_for_display,
+    build_raw_file_url, choose_file_target, file_name_from_remote_path, redact_url_for_display,
     safe_directory_relative_item_path,
 };
 use self::raw::{RawDownloadStrategy, should_attempt_prefix_proxy};
 use self::transport::{build_client, send_json_request, stream_download};
+use self::tree::{TreeEntry, TreeResponse, build_tree_url};
 
 pub const DEFAULT_GH_PROXY: &str = "https://gh-proxy.com/";
 pub const DEFAULT_GITHUB_API_BASE: &str = "https://api.github.com";
@@ -61,6 +64,16 @@ struct DownloadJob {
     item: ContentItem,
     local_target: PathBuf,
     shown_path: String,
+    rev: Option<String>,
+    private_repo: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RepositoryInfo {
+    #[serde(default)]
+    default_branch: Option<String>,
+    #[serde(rename = "private", default)]
+    is_private: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,17 +85,32 @@ enum SaveFileOutcome {
 pub struct Runner {
     config: RuntimeConfig,
     output: Output,
+    repo_info: std::sync::Mutex<Option<RepositoryInfo>>,
 }
 
 impl Runner {
     pub fn new(config: RuntimeConfig, output: Output) -> Self {
-        Self { config, output }
+        Self {
+            config,
+            output,
+            repo_info: std::sync::Mutex::new(None),
+        }
     }
 
     pub fn run(&self, options: &ResolvedOptions) -> Result<RunOutcome, AppError> {
         let client = build_client()?;
+        let private_repo = if options.token.is_some() {
+            let info = self.load_repo_info(&client, options)?;
+            if options.debug {
+                self.output
+                    .debug_line(&format!("[debug] repository-private: {}", info.is_private));
+            }
+            info.is_private
+        } else {
+            false
+        };
         let mut stats = DownloadStats::default();
-        let saved_path = self.detect_and_download(&client, options, &mut stats)?;
+        let saved_path = self.detect_and_download(&client, options, &mut stats, private_repo)?;
         self.output.completion(
             &options.repo,
             &options.remote_path,
@@ -99,6 +127,7 @@ impl Runner {
         client: &Client,
         options: &ResolvedOptions,
         stats: &mut DownloadStats,
+        private_repo: bool,
     ) -> Result<PathBuf, AppError> {
         let normalized_path = normalize_repo_path(&options.remote_path);
         let metadata_url = build_contents_api_url(
@@ -113,12 +142,25 @@ impl Runner {
         if response.is_object() {
             let item: ContentItem =
                 serde_json::from_value(response).map_err(|err| AppError::Json(err.to_string()))?;
-            let final_target = choose_file_target(&options.local_target, &normalized_path, &item);
+            let final_target = choose_file_target(
+                &options.local_target,
+                &normalized_path,
+                &item,
+                options.local_target_is_dir_hint,
+            )?;
             let shown_path = item
                 .name
                 .clone()
                 .unwrap_or_else(|| file_name_from_remote_path(&normalized_path));
-            match self.save_file(client, options, &item, &final_target, &shown_path)? {
+            match self.save_file(
+                client,
+                options,
+                &item,
+                &final_target,
+                &shown_path,
+                options.git_ref.as_deref(),
+                private_repo,
+            )? {
                 SaveFileOutcome::Downloaded => stats.files_downloaded += 1,
                 SaveFileOutcome::SkippedExisting => stats.skipped_existing_files += 1,
             }
@@ -127,26 +169,25 @@ impl Runner {
 
         if response.is_array() {
             let directory_target = choose_directory_target(&options.local_target, &normalized_path);
-            let entries: Vec<ContentItem> =
-                serde_json::from_value(response).map_err(|err| AppError::Json(err.to_string()))?;
-            let files = self.collect_directory_files(
+            let rev = self.resolve_directory_rev(client, options)?;
+            let jobs = self.collect_directory_jobs(
                 client,
                 options,
                 stats,
                 &normalized_path,
-                Some(entries),
+                &directory_target,
+                &rev,
+                private_repo,
             )?;
             let worker_threads =
-                effective_directory_worker_threads(files.len(), options.concurrency);
+                effective_directory_worker_threads(jobs.len(), options.concurrency);
             self.output
-                .found_directory(files.len(), &normalized_path, worker_threads);
+                .found_directory(jobs.len(), &normalized_path, worker_threads);
             fs::create_dir_all(&directory_target).map_err(|source| AppError::Io {
                 path: directory_target.clone(),
                 source,
             })?;
             self.output.created_directory(&directory_target);
-            let jobs =
-                self.build_directory_download_jobs(&directory_target, &normalized_path, files)?;
             self.download_directory_files(client, options, stats, jobs)?;
             return Ok(directory_target);
         }
@@ -154,64 +195,200 @@ impl Runner {
         Err(AppError::UnexpectedApiResponse)
     }
 
-    fn collect_directory_files(
+    fn load_repo_info(
+        &self,
+        client: &Client,
+        options: &ResolvedOptions,
+    ) -> Result<RepositoryInfo, AppError> {
+        if let Some(info) = self.repo_info.lock().expect("repository info lock").clone() {
+            return Ok(info);
+        }
+
+        let url = format!(
+            "{}/repos/{}",
+            self.config.api_base.trim_end_matches('/'),
+            options.repo
+        );
+        self.debug_log_url(options, "repository-url", &url);
+        let response = self.get_json(client, &url, options)?;
+        let info: RepositoryInfo =
+            serde_json::from_value(response).map_err(|err| AppError::Json(err.to_string()))?;
+        *self.repo_info.lock().expect("repository info lock") = Some(info.clone());
+        Ok(info)
+    }
+
+    fn resolve_directory_rev(
+        &self,
+        client: &Client,
+        options: &ResolvedOptions,
+    ) -> Result<String, AppError> {
+        if let Some(git_ref) = options
+            .git_ref
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            return Ok(git_ref.to_string());
+        }
+
+        let info = self.load_repo_info(client, options)?;
+        let branch = info.default_branch.ok_or(AppError::UnexpectedApiResponse)?;
+        if options.debug {
+            self.output
+                .debug_line(&format!("[debug] default-branch: {}", branch));
+        }
+        Ok(branch)
+    }
+
+    fn collect_directory_jobs(
         &self,
         client: &Client,
         options: &ResolvedOptions,
         stats: &mut DownloadStats,
-        remote_path: &str,
-        entries: Option<Vec<ContentItem>>,
-    ) -> Result<Vec<ContentItem>, AppError> {
-        let directory_entries = match entries {
-            Some(entries) => entries,
-            None => self.get_directory_listing(client, options, remote_path)?,
-        };
+        remote_root: &str,
+        directory_target: &Path,
+        rev: &str,
+        private_repo: bool,
+    ) -> Result<Vec<DownloadJob>, AppError> {
+        let entries = self.fetch_tree_entries(client, options, rev)?;
+        let mut jobs = Vec::new();
 
-        let mut files = Vec::new();
-        for item in directory_entries {
-            let item_path = match item.path.clone() {
-                Some(path) => path,
-                None => continue,
-            };
-            match item.kind.as_deref() {
-                Some("dir") => files.extend(
-                    self.collect_directory_files(client, options, stats, &item_path, None)?,
-                ),
-                Some("file") => files.push(item),
-                other => {
-                    stats.skipped_entries += 1;
-                    self.output.warning(&format!(
-                        "{} {} ({})",
-                        match options.language {
-                            Language::Zh => "跳过不支持的条目：",
-                            Language::En => "Skipping unsupported entry:",
-                        },
-                        item_path,
-                        other.unwrap_or("unknown"),
-                    ));
-                }
+        for entry in entries {
+            if entry.is_tree() {
+                continue;
             }
+            if !entry.is_regular_file() {
+                stats.skipped_entries += 1;
+                self.warn_skipped_tree_entry(options, &entry);
+                continue;
+            }
+
+            let relative_part = safe_directory_relative_item_path(remote_root, &entry.path)?;
+            let name = Path::new(&entry.path)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(ToOwned::to_owned);
+            jobs.push(DownloadJob {
+                item: ContentItem {
+                    name,
+                    path: Some(entry.path.clone()),
+                    kind: Some("file".to_string()),
+                    download_url: self.raw_url_for(options, rev, &entry.path),
+                },
+                local_target: directory_target.join(&relative_part),
+                shown_path: relative_part,
+                rev: Some(rev.to_string()),
+                private_repo,
+            });
         }
-        Ok(files)
+
+        Ok(jobs)
     }
 
-    fn get_directory_listing(
+    fn warn_skipped_tree_entry(&self, options: &ResolvedOptions, entry: &TreeEntry) {
+        let kind = if entry.is_symlink() {
+            "symlink"
+        } else if entry.is_submodule() {
+            "submodule"
+        } else {
+            entry.kind.as_str()
+        };
+        self.output.warning(&format!(
+            "{} {} ({})",
+            match options.language {
+                Language::Zh => "跳过不支持的条目：",
+                Language::En => "Skipping unsupported entry:",
+            },
+            entry.path,
+            kind
+        ));
+    }
+
+    fn raw_url_for(&self, options: &ResolvedOptions, rev: &str, repo_path: &str) -> Option<String> {
+        if self.is_default_github_api() {
+            Some(build_raw_file_url(&options.repo, rev, repo_path))
+        } else {
+            None
+        }
+    }
+
+    fn is_default_github_api(&self) -> bool {
+        self.config.api_base.trim_end_matches('/') == DEFAULT_GITHUB_API_BASE
+    }
+
+    fn fetch_tree_entries(
         &self,
         client: &Client,
         options: &ResolvedOptions,
-        remote_path: &str,
-    ) -> Result<Vec<ContentItem>, AppError> {
-        let response = self.get_json(
-            client,
-            &build_contents_api_url(
-                &self.config.api_base,
-                &options.repo,
-                remote_path,
-                options.git_ref.as_deref(),
-            ),
-            options,
-        )?;
-        serde_json::from_value(response).map_err(|err| AppError::Json(err.to_string()))
+        rev: &str,
+    ) -> Result<Vec<TreeEntry>, AppError> {
+        let mut entries = Vec::new();
+        self.fetch_tree_into(client, options, rev, "", &mut entries, 0)?;
+        Ok(entries)
+    }
+
+    fn fetch_tree_into(
+        &self,
+        client: &Client,
+        options: &ResolvedOptions,
+        rev: &str,
+        prefix: &str,
+        entries: &mut Vec<TreeEntry>,
+        depth: usize,
+    ) -> Result<(), AppError> {
+        const MAX_TREE_DEPTH: usize = 64;
+        if depth > MAX_TREE_DEPTH {
+            return Err(AppError::Json(
+                "tree enumeration exceeded the maximum depth".to_string(),
+            ));
+        }
+
+        let url = build_tree_url(&self.config.api_base, &options.repo, rev, true);
+        self.debug_log_url(options, "tree-url", &url);
+        let response = self.get_json(client, &url, options)?;
+        let tree: TreeResponse =
+            serde_json::from_value(response).map_err(|err| AppError::Json(err.to_string()))?;
+
+        if !tree.truncated {
+            if options.debug {
+                self.output
+                    .debug_line("[debug] enumeration-mode: recursive");
+            }
+            entries.extend(tree.tree.into_iter().map(|mut entry| {
+                entry.path = format!("{}{}", prefix, entry.path);
+                entry
+            }));
+            return Ok(());
+        }
+
+        if options.debug {
+            self.output
+                .debug_line("[debug] enumeration-mode: truncated-fallback");
+        }
+
+        let url = build_tree_url(&self.config.api_base, &options.repo, rev, false);
+        self.debug_log_url(options, "tree-url", &url);
+        let response = self.get_json(client, &url, options)?;
+        let root: TreeResponse =
+            serde_json::from_value(response).map_err(|err| AppError::Json(err.to_string()))?;
+
+        for mut entry in root.tree {
+            entry.path = format!("{}{}", prefix, entry.path);
+            if entry.is_tree() {
+                let child_prefix = format!("{}/", entry.path);
+                self.fetch_tree_into(
+                    client,
+                    options,
+                    &entry.sha,
+                    &child_prefix,
+                    entries,
+                    depth + 1,
+                )?;
+            } else {
+                entries.push(entry);
+            }
+        }
+
+        Ok(())
     }
 
     fn save_file(
@@ -221,10 +398,20 @@ impl Runner {
         item: &ContentItem,
         local_target: &Path,
         shown_path: &str,
+        rev: Option<&str>,
+        private_repo: bool,
     ) -> Result<SaveFileOutcome, AppError> {
-        if !options.overwrite && local_target.is_file() {
-            self.output.skipping_existing(shown_path);
-            return Ok(SaveFileOutcome::SkippedExisting);
+        match existing_target_kind(local_target)? {
+            Some(ExistingTargetKind::Directory) => {
+                return Err(AppError::TargetIsDirectory {
+                    path: local_target.to_path_buf(),
+                });
+            }
+            Some(ExistingTargetKind::Entry) if !options.overwrite => {
+                self.output.skipping_existing(shown_path);
+                return Ok(SaveFileOutcome::SkippedExisting);
+            }
+            _ => {}
         }
 
         let item_path = item
@@ -234,44 +421,56 @@ impl Runner {
 
         self.output.downloading(shown_path);
 
-        if let Some(download_url) = item.download_url.as_deref() {
-            self.debug_log_url(options, "download-url", download_url);
-            if self
-                .download_from_raw_url(client, options, local_target, download_url)
-                .is_ok()
-            {
-                return Ok(SaveFileOutcome::Downloaded);
-            }
+        let api_raw_primary = options.token.is_some() && private_repo;
+        let mut attempts = Vec::new();
+        let mut raw_error = None;
 
-            self.output.warning(match options.language {
-                Language::Zh => "文件下载失败，正在改用 GitHub Raw API...",
-                Language::En => "File download failed, falling back to GitHub Raw API...",
-            });
+        if !api_raw_primary && let Some(download_url) = item.download_url.as_deref() {
+            self.debug_log_url(options, "download-url", download_url);
+            match self.download_from_raw_url(
+                client,
+                options,
+                local_target,
+                download_url,
+                &mut attempts,
+            ) {
+                Ok(()) => return Ok(SaveFileOutcome::Downloaded),
+                Err(error) => {
+                    self.output.warning(match options.language {
+                        Language::Zh => "文件下载失败，正在改用 GitHub Raw API...",
+                        Language::En => "File download failed, falling back to GitHub Raw API...",
+                    });
+                    raw_error = Some(error);
+                }
+            }
         }
 
         self.debug_log_strategy(options, RawDownloadStrategy::RawApi);
-        self.stream_contents_api_file(client, options, item_path, local_target)?;
-        Ok(SaveFileOutcome::Downloaded)
-    }
+        match self.stream_contents_api_file(client, options, item_path, local_target, rev) {
+            Ok(()) => Ok(SaveFileOutcome::Downloaded),
+            Err(api_error) => {
+                if api_raw_primary {
+                    attempts.push(format!("raw api: {}", summarize_error(&api_error)));
+                    return Err(AppError::Download {
+                        remote_path: item_path.to_string(),
+                        local_path: local_target.to_path_buf(),
+                        attempts,
+                        cause: Box::new(api_error),
+                    });
+                }
+                if attempts.is_empty() && raw_error.is_none() {
+                    return Err(api_error);
+                }
 
-    fn build_directory_download_jobs(
-        &self,
-        directory_target: &Path,
-        remote_root: &str,
-        files: Vec<ContentItem>,
-    ) -> Result<Vec<DownloadJob>, AppError> {
-        files
-            .into_iter()
-            .map(|item| {
-                let item_path = item.path.clone().ok_or(AppError::MissingRepositoryPath)?;
-                let relative_part = safe_directory_relative_item_path(remote_root, &item_path)?;
-                Ok(DownloadJob {
-                    item,
-                    local_target: directory_target.join(&relative_part),
-                    shown_path: relative_part,
+                attempts.push(format!("raw api: {}", summarize_error(&api_error)));
+                Err(AppError::Download {
+                    remote_path: item_path.to_string(),
+                    local_path: local_target.to_path_buf(),
+                    attempts,
+                    cause: Box::new(raw_error.unwrap_or(api_error)),
                 })
-            })
-            .collect()
+            }
+        }
     }
 
     fn download_directory_files(
@@ -282,13 +481,30 @@ impl Runner {
         jobs: Vec<DownloadJob>,
     ) -> Result<(), AppError> {
         let worker = |job| self.download_job(client, options, job);
-        for outcome in run_bounded_work(&jobs, options.concurrency, &worker)? {
-            match outcome {
+        let outcome = run_bounded_work(&jobs, options.concurrency, options.keep_going, &worker);
+
+        for result in outcome.results {
+            match result {
                 SaveFileOutcome::Downloaded => stats.files_downloaded += 1,
                 SaveFileOutcome::SkippedExisting => stats.skipped_existing_files += 1,
             }
         }
-        Ok(())
+
+        if outcome.errors.is_empty() {
+            return Ok(());
+        }
+
+        let failures: Vec<FailedFile> = outcome.errors.iter().map(failed_file_from_error).collect();
+        Err(AppError::DirectoryTransfer {
+            failed_count: failures.len(),
+            failures,
+            stats: PartialStats {
+                downloaded: stats.files_downloaded,
+                skipped_existing: stats.skipped_existing_files,
+                skipped_entries: stats.skipped_entries,
+            },
+            aborted_early: outcome.aborted_early,
+        })
     }
 
     fn download_job(
@@ -297,13 +513,32 @@ impl Runner {
         options: &ResolvedOptions,
         job: DownloadJob,
     ) -> Result<SaveFileOutcome, AppError> {
-        self.save_file(
+        match self.save_file(
             client,
             options,
             &job.item,
             &job.local_target,
             &job.shown_path,
-        )
+            job.rev.as_deref(),
+            job.private_repo,
+        ) {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => {
+                if matches!(error, AppError::Download { .. }) {
+                    return Err(error);
+                }
+                Err(AppError::Download {
+                    remote_path: job
+                        .item
+                        .path
+                        .clone()
+                        .unwrap_or_else(|| job.shown_path.clone()),
+                    local_path: job.local_target.clone(),
+                    attempts: Vec::new(),
+                    cause: Box::new(error),
+                })
+            }
+        }
     }
 
     fn stream_contents_api_file(
@@ -312,13 +547,10 @@ impl Runner {
         options: &ResolvedOptions,
         remote_path: &str,
         local_target: &Path,
+        rev: Option<&str>,
     ) -> Result<(), AppError> {
-        let api_url = build_contents_api_url(
-            &self.config.api_base,
-            &options.repo,
-            remote_path,
-            options.git_ref.as_deref(),
-        );
+        let api_url =
+            build_contents_api_url(&self.config.api_base, &options.repo, remote_path, rev);
         self.debug_log_url(options, "raw-api-url", &api_url);
 
         self.stream_download(
@@ -331,12 +563,7 @@ impl Runner {
     }
 
     fn should_attempt_prefix_proxy(&self, options: &ResolvedOptions, error: &AppError) -> bool {
-        should_attempt_prefix_proxy(
-            options.prefix_mode,
-            options.token.is_some(),
-            &options.proxy_base,
-            error,
-        )
+        should_attempt_prefix_proxy(options.prefix_mode, &options.proxy_base, error)
     }
 
     fn download_from_raw_url(
@@ -345,15 +572,20 @@ impl Runner {
         options: &ResolvedOptions,
         local_target: &Path,
         download_url: &str,
+        attempts: &mut Vec<String>,
     ) -> Result<(), AppError> {
         match options.prefix_mode {
             PrefixProxyMode::Direct => {
                 self.debug_log_strategy(options, RawDownloadStrategy::DirectUrl);
-                self.stream_download(client, download_url, local_target, None, None)
+                let result = self.stream_download(client, download_url, local_target, None, None);
+                record_attempt(attempts, "direct raw", &result);
+                result
             }
             PrefixProxyMode::Fallback => {
                 self.debug_log_strategy(options, RawDownloadStrategy::DirectUrl);
-                match self.stream_download(client, download_url, local_target, None, None) {
+                let direct = self.stream_download(client, download_url, local_target, None, None);
+                record_attempt(attempts, "direct raw", &direct);
+                match direct {
                     Ok(()) => Ok(()),
                     Err(error) if self.should_attempt_prefix_proxy(options, &error) => {
                         let proxied_url = join_proxy_url(&options.proxy_base, download_url);
@@ -369,7 +601,10 @@ impl Runner {
                                 redact_url_for_display(&proxied_url)
                             ),
                         });
-                        self.stream_download(client, &proxied_url, local_target, None, None)
+                        let result =
+                            self.stream_download(client, &proxied_url, local_target, None, None);
+                        record_attempt(attempts, "prefix proxy", &result);
+                        result
                     }
                     Err(error) => Err(error),
                 }
@@ -377,13 +612,18 @@ impl Runner {
             PrefixProxyMode::Prefer => {
                 if options.proxy_base.trim().is_empty() {
                     self.debug_log_strategy(options, RawDownloadStrategy::DirectUrl);
-                    return self.stream_download(client, download_url, local_target, None, None);
+                    let result =
+                        self.stream_download(client, download_url, local_target, None, None);
+                    record_attempt(attempts, "direct raw", &result);
+                    return result;
                 }
 
                 let proxied_url = join_proxy_url(&options.proxy_base, download_url);
                 self.debug_log_strategy(options, RawDownloadStrategy::PrefixProxy);
                 self.debug_log_url(options, "prefix-url", &proxied_url);
-                match self.stream_download(client, &proxied_url, local_target, None, None) {
+                let proxied = self.stream_download(client, &proxied_url, local_target, None, None);
+                record_attempt(attempts, "prefix proxy", &proxied);
+                match proxied {
                     Ok(()) => Ok(()),
                     Err(_) => {
                         self.output.warning(match options.language {
@@ -393,7 +633,10 @@ impl Runner {
                             }
                         });
                         self.debug_log_strategy(options, RawDownloadStrategy::DirectUrl);
-                        self.stream_download(client, download_url, local_target, None, None)
+                        let result =
+                            self.stream_download(client, download_url, local_target, None, None);
+                        record_attempt(attempts, "direct raw", &result);
+                        result
                     }
                 }
             }
@@ -459,23 +702,40 @@ impl Runner {
     }
 }
 
-fn run_bounded_work<T, R, E, F>(items: &[T], concurrency: usize, worker: &F) -> Result<Vec<R>, E>
+struct WorkOutcome<R, E> {
+    results: Vec<R>,
+    errors: Vec<E>,
+    aborted_early: bool,
+}
+
+fn run_bounded_work<T, R, E, F>(
+    items: &[T],
+    concurrency: usize,
+    keep_going: bool,
+    worker: &F,
+) -> WorkOutcome<R, E>
 where
     T: Clone + Send,
     R: Send,
     E: Send,
     F: Fn(T) -> Result<R, E> + Sync,
 {
+    let mut results = Vec::new();
+    let mut errors = Vec::new();
+
     if items.is_empty() {
-        return Ok(Vec::new());
+        return WorkOutcome {
+            results,
+            errors,
+            aborted_early: false,
+        };
     }
 
     let concurrency = concurrency.max(1);
-    let mut results = Vec::with_capacity(items.len());
 
     for batch in items.chunks(concurrency) {
-        let mut first_error = None;
         let mut batch_results = Vec::with_capacity(batch.len());
+        let mut batch_errors = Vec::new();
 
         thread::scope(|scope| {
             let mut handles = Vec::with_capacity(batch.len());
@@ -486,27 +746,87 @@ where
             for handle in handles {
                 match handle.join().expect("worker thread panicked") {
                     Ok(result) => batch_results.push(result),
-                    Err(error) => {
-                        if first_error.is_none() {
-                            first_error = Some(error);
-                        }
-                    }
+                    Err(error) => batch_errors.push(error),
                 }
             }
         });
 
-        if let Some(error) = first_error {
-            return Err(error);
-        }
-
         results.extend(batch_results);
+        let had_errors = !batch_errors.is_empty();
+        errors.extend(batch_errors);
+
+        if had_errors && !keep_going {
+            return WorkOutcome {
+                results,
+                errors,
+                aborted_early: true,
+            };
+        }
     }
 
-    Ok(results)
+    WorkOutcome {
+        results,
+        errors,
+        aborted_early: false,
+    }
 }
 
 fn effective_directory_worker_threads(file_count: usize, concurrency: usize) -> usize {
     file_count.min(concurrency.max(1))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExistingTargetKind {
+    Entry,
+    Directory,
+}
+
+fn existing_target_kind(path: &Path) -> Result<Option<ExistingTargetKind>, AppError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => Ok(Some(ExistingTargetKind::Directory)),
+        Ok(_) => Ok(Some(ExistingTargetKind::Entry)),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(AppError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+fn record_attempt(attempts: &mut Vec<String>, label: &str, result: &Result<(), AppError>) {
+    if let Err(error) = result {
+        attempts.push(format!("{}: {}", label, summarize_error(error)));
+    }
+}
+
+fn failed_file_from_error(error: &AppError) -> FailedFile {
+    match error {
+        AppError::Download {
+            remote_path,
+            local_path,
+            cause,
+            ..
+        } => FailedFile {
+            path: remote_path.clone(),
+            local_path: local_path.display().to_string(),
+            reason: summarize_error(cause),
+        },
+        other => FailedFile {
+            path: String::new(),
+            local_path: String::new(),
+            reason: summarize_error(other),
+        },
+    }
+}
+
+fn summarize_error(error: &AppError) -> String {
+    match error {
+        AppError::HttpStatus { status, .. } => format!("HTTP {}", status),
+        AppError::Request { message, .. } => format!("network error: {}", message),
+        AppError::Transfer { message, .. } => format!("network error: {}", message),
+        AppError::InvalidUrl(_) => "unsupported URL".to_string(),
+        other => other.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -520,6 +840,35 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+    fn test_options(api_base: String, remote_path: &str, local_target: PathBuf) -> ResolvedOptions {
+        ResolvedOptions {
+            repo: "owner/repo".to_string(),
+            remote_path: remote_path.to_string(),
+            local_target,
+            local_target_is_dir_hint: false,
+            git_ref: None,
+            token: None,
+            api_base,
+            proxy_base: DEFAULT_GH_PROXY.to_string(),
+            prefix_mode: PrefixProxyMode::Fallback,
+            concurrency: 4,
+            language: Language::En,
+            overwrite: false,
+            keep_going: false,
+            json: false,
+            debug: false,
+            no_color: true,
+        }
+    }
+
+    fn test_runner(api_base: &str) -> Runner {
+        Runner::new(
+            RuntimeConfig {
+                api_base: api_base.to_string(),
+            },
+            Output::new(false, Language::En),
+        )
+    }
 
     #[test]
     fn downloads_single_file() {
@@ -548,6 +897,7 @@ mod tests {
             repo: "owner/repo".to_string(),
             remote_path: "README.md".to_string(),
             local_target: target.clone(),
+            local_target_is_dir_hint: false,
             git_ref: None,
             token: None,
             api_base: server.url(),
@@ -556,6 +906,7 @@ mod tests {
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            keep_going: false,
             json: false,
             debug: false,
             no_color: true,
@@ -575,37 +926,41 @@ mod tests {
     #[test]
     fn downloads_nested_directory() {
         let mut server = Server::new();
-        let top_file_url = format!("{}/raw/src/main.rs", server.url());
-        let nested_file_url = format!("{}/raw/src/nested/lib.rs", server.url());
 
-        let _top_listing = server
+        let _listing = server
             .mock("GET", "/repos/owner/repo/contents/src")
             .match_header("accept", "application/vnd.github+json")
             .with_status(200)
-            .with_body(format!(
-                r#"[{{"name":"main.rs","path":"src/main.rs","type":"file","download_url":"{}"}},{{"name":"nested","path":"src/nested","type":"dir","download_url":null}}]"#,
-                top_file_url
-            ))
+            .with_body("[]")
             .create();
 
-        let _nested_listing = server
-            .mock("GET", "/repos/owner/repo/contents/src/nested")
-            .match_header("accept", "application/vnd.github+json")
+        let _repo = server
+            .mock("GET", "/repos/owner/repo")
             .with_status(200)
-            .with_body(format!(
-                r#"[{{"name":"lib.rs","path":"src/nested/lib.rs","type":"file","download_url":"{}"}}]"#,
-                nested_file_url
-            ))
+            .with_body(r#"{"default_branch":"main","private":false}"#)
+            .create();
+
+        let _tree = server
+            .mock("GET", "/repos/owner/repo/git/trees/main?recursive=1")
+            .with_status(200)
+            .with_body(
+                r#"{"sha":"tree-sha","truncated":false,"tree":[{"path":"src/main.rs","mode":"100644","type":"blob","sha":"a","size":12},{"path":"src/nested/lib.rs","mode":"100644","type":"blob","sha":"b","size":18}]}"#,
+            )
             .create();
 
         let _top_file = server
-            .mock("GET", "/raw/src/main.rs")
+            .mock("GET", "/repos/owner/repo/contents/src/main.rs?ref=main")
+            .match_header("accept", "application/vnd.github.raw")
             .with_status(200)
             .with_body("fn main() {}")
             .create();
 
         let _nested_file = server
-            .mock("GET", "/raw/src/nested/lib.rs")
+            .mock(
+                "GET",
+                "/repos/owner/repo/contents/src/nested/lib.rs?ref=main",
+            )
+            .match_header("accept", "application/vnd.github.raw")
             .with_status(200)
             .with_body("pub fn helper() {}")
             .create();
@@ -615,6 +970,7 @@ mod tests {
             repo: "owner/repo".to_string(),
             remote_path: "src".to_string(),
             local_target: dir.path().join("downloads"),
+            local_target_is_dir_hint: false,
             git_ref: None,
             token: None,
             api_base: server.url(),
@@ -623,6 +979,7 @@ mod tests {
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            keep_going: false,
             json: false,
             debug: false,
             no_color: true,
@@ -662,6 +1019,7 @@ mod tests {
             repo: "owner/repo".to_string(),
             remote_path: "README.md".to_string(),
             local_target: dir.path().join("README.md"),
+            local_target_is_dir_hint: false,
             git_ref: None,
             token: None,
             api_base: api_server.url(),
@@ -670,6 +1028,7 @@ mod tests {
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            keep_going: false,
             json: false,
             debug: false,
             no_color: true,
@@ -723,6 +1082,7 @@ mod tests {
             repo: "owner/repo".to_string(),
             remote_path: "README.md".to_string(),
             local_target: dir.path().join("README.md"),
+            local_target_is_dir_hint: false,
             git_ref: None,
             token: None,
             api_base: api_server.url(),
@@ -731,6 +1091,7 @@ mod tests {
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            keep_going: false,
             json: false,
             debug: false,
             no_color: true,
@@ -745,6 +1106,146 @@ mod tests {
         let outcome = runner.run(&options).expect("download should succeed");
         assert_eq!(
             fs::read_to_string(outcome.saved_path).expect("readme"),
+            "proxy raw body"
+        );
+    }
+
+    #[test]
+    fn private_repo_with_token_uses_api_raw_without_anonymous_raw_attempt() {
+        let mut server = Server::new();
+        let download_url = format!("{}/download/README.md", server.url());
+
+        let _repo = server
+            .mock("GET", "/repos/owner/repo")
+            .with_status(200)
+            .with_body(r#"{"default_branch":"main","private":true}"#)
+            .create();
+
+        let _metadata = server
+            .mock("GET", "/repos/owner/repo/contents/README.md")
+            .match_header("accept", "application/vnd.github+json")
+            .with_status(200)
+            .with_body(format!(
+                r#"{{"name":"README.md","path":"README.md","type":"file","download_url":"{}"}}"#,
+                download_url
+            ))
+            .create();
+
+        let anonymous_raw = server
+            .mock("GET", "/download/README.md")
+            .expect(0)
+            .with_status(200)
+            .with_body("should not be requested")
+            .create();
+
+        let _raw_api = server
+            .mock("GET", "/repos/owner/repo/contents/README.md")
+            .match_header("accept", "application/vnd.github.raw")
+            .with_status(200)
+            .with_body("private body")
+            .create();
+
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("README.md");
+        let options = ResolvedOptions {
+            repo: "owner/repo".to_string(),
+            remote_path: "README.md".to_string(),
+            local_target: target.clone(),
+            local_target_is_dir_hint: false,
+            git_ref: None,
+            token: Some("secret".to_string()),
+            api_base: server.url(),
+            proxy_base: DEFAULT_GH_PROXY.to_string(),
+            prefix_mode: PrefixProxyMode::Fallback,
+            concurrency: 4,
+            language: Language::En,
+            overwrite: false,
+            keep_going: false,
+            json: false,
+            debug: false,
+            no_color: true,
+        };
+        let runner = Runner::new(
+            RuntimeConfig {
+                api_base: server.url(),
+            },
+            Output::new(false, Language::En),
+        );
+
+        let outcome = runner.run(&options).expect("download should succeed");
+        anonymous_raw.assert();
+        assert_eq!(
+            fs::read_to_string(outcome.saved_path).expect("file"),
+            "private body"
+        );
+    }
+
+    #[test]
+    fn public_repo_with_token_can_retry_anonymous_raw_through_proxy() {
+        let mut api_server = Server::new();
+        let mut proxy_server = Server::new();
+        let mut raw_server = Server::new();
+        let download_url = format!("{}/owner/repo/main/README.md", raw_server.url());
+
+        let _repo = api_server
+            .mock("GET", "/repos/owner/repo")
+            .with_status(200)
+            .with_body(r#"{"default_branch":"main","private":false}"#)
+            .create();
+
+        let _metadata = api_server
+            .mock("GET", "/repos/owner/repo/contents/README.md")
+            .match_header("accept", "application/vnd.github+json")
+            .with_status(200)
+            .with_body(format!(
+                r#"{{"name":"README.md","path":"README.md","type":"file","download_url":"{}"}}"#,
+                download_url
+            ))
+            .create();
+
+        let _direct_raw = raw_server
+            .mock("GET", "/owner/repo/main/README.md")
+            .with_status(503)
+            .with_body("raw unavailable")
+            .create();
+
+        let proxied_path = format!("/{}", download_url);
+        let _proxy = proxy_server
+            .mock("GET", Matcher::Exact(proxied_path))
+            .with_status(200)
+            .with_body("proxy raw body")
+            .create();
+
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("README.md");
+        let options = ResolvedOptions {
+            repo: "owner/repo".to_string(),
+            remote_path: "README.md".to_string(),
+            local_target: target.clone(),
+            local_target_is_dir_hint: false,
+            git_ref: None,
+            token: Some("secret".to_string()),
+            api_base: api_server.url(),
+            proxy_base: proxy_server.url(),
+            prefix_mode: PrefixProxyMode::Fallback,
+            concurrency: 4,
+            language: Language::En,
+            overwrite: false,
+            keep_going: false,
+            json: false,
+            debug: false,
+            no_color: true,
+        };
+        let runner = Runner::new(
+            RuntimeConfig {
+                api_base: api_server.url(),
+            },
+            Output::new(false, Language::En),
+        );
+
+        let outcome = runner.run(&options).expect("download should succeed");
+        assert_eq!(
+            fs::read_to_string(outcome.saved_path).expect("file"),
             "proxy raw body"
         );
     }
@@ -785,6 +1286,7 @@ mod tests {
             repo: "owner/repo".to_string(),
             remote_path: "README.md".to_string(),
             local_target: dir.path().join("README.md"),
+            local_target_is_dir_hint: false,
             git_ref: None,
             token: None,
             api_base: api_server.url(),
@@ -793,6 +1295,7 @@ mod tests {
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            keep_going: false,
             json: false,
             debug: false,
             no_color: true,
@@ -811,39 +1314,227 @@ mod tests {
         );
     }
 
+    fn directory_failure_server() -> (mockito::ServerGuard, mockito::Mock) {
+        let mut server = Server::new();
+        let _listing = server
+            .mock("GET", "/repos/owner/repo/contents/src")
+            .match_header("accept", "application/vnd.github+json")
+            .with_status(200)
+            .with_body("[]")
+            .create();
+        let _repo = server
+            .mock("GET", "/repos/owner/repo")
+            .with_status(200)
+            .with_body(r#"{"default_branch":"main","private":false}"#)
+            .create();
+        let _tree = server
+            .mock("GET", "/repos/owner/repo/git/trees/main?recursive=1")
+            .with_status(200)
+            .with_body(
+                r#"{"sha":"tree-sha","truncated":false,"tree":[{"path":"src/a.rs","mode":"100644","type":"blob","sha":"a"},{"path":"src/b.rs","mode":"100644","type":"blob","sha":"b"},{"path":"src/c.rs","mode":"100644","type":"blob","sha":"c"}]}"#,
+            )
+            .create();
+        let _a = server
+            .mock("GET", "/repos/owner/repo/contents/src/a.rs?ref=main")
+            .match_header("accept", "application/vnd.github.raw")
+            .with_status(200)
+            .with_body("fn a() {}")
+            .create();
+        let _b = server
+            .mock("GET", "/repos/owner/repo/contents/src/b.rs?ref=main")
+            .match_header("accept", "application/vnd.github.raw")
+            .with_status(503)
+            .with_body("boom")
+            .create();
+        let c = server
+            .mock("GET", "/repos/owner/repo/contents/src/c.rs?ref=main")
+            .match_header("accept", "application/vnd.github.raw")
+            .with_status(200)
+            .with_body("fn c() {}")
+            .create();
+        (server, c)
+    }
+
+    fn failing_directory_options(
+        api_base: String,
+        target: PathBuf,
+        keep_going: bool,
+    ) -> ResolvedOptions {
+        ResolvedOptions {
+            repo: "owner/repo".to_string(),
+            remote_path: "src".to_string(),
+            local_target: target,
+            local_target_is_dir_hint: false,
+            git_ref: None,
+            token: None,
+            api_base,
+            proxy_base: DEFAULT_GH_PROXY.to_string(),
+            prefix_mode: PrefixProxyMode::Fallback,
+            concurrency: 1,
+            language: Language::En,
+            overwrite: false,
+            keep_going,
+            json: false,
+            debug: false,
+            no_color: true,
+        }
+    }
+
+    #[test]
+    fn keep_going_continues_after_directory_file_failure() {
+        let (server, c_mock) = directory_failure_server();
+        let dir = tempdir().expect("tempdir");
+        let options = failing_directory_options(server.url(), dir.path().join("downloads"), true);
+        let runner = Runner::new(
+            RuntimeConfig {
+                api_base: server.url(),
+            },
+            Output::new(false, Language::En),
+        );
+
+        let error = runner
+            .run(&options)
+            .expect_err("partial directory failure should fail the command");
+
+        match error {
+            AppError::DirectoryTransfer {
+                failures,
+                stats,
+                aborted_early,
+                ..
+            } => {
+                assert_eq!(failures.len(), 1);
+                assert_eq!(failures[0].path, "src/b.rs");
+                assert!(failures[0].reason.contains("503"));
+                assert_eq!(stats.downloaded, 2);
+                assert!(!aborted_early);
+            }
+            other => panic!("expected aggregate directory failure, got {other:?}"),
+        }
+        c_mock.assert();
+    }
+
+    #[test]
+    fn fail_fast_aborts_remaining_directory_files() {
+        let mut server = Server::new();
+        let _listing = server
+            .mock("GET", "/repos/owner/repo/contents/src")
+            .match_header("accept", "application/vnd.github+json")
+            .with_status(200)
+            .with_body("[]")
+            .create();
+        let _repo = server
+            .mock("GET", "/repos/owner/repo")
+            .with_status(200)
+            .with_body(r#"{"default_branch":"main","private":false}"#)
+            .create();
+        let _tree = server
+            .mock("GET", "/repos/owner/repo/git/trees/main?recursive=1")
+            .with_status(200)
+            .with_body(
+                r#"{"sha":"tree-sha","truncated":false,"tree":[{"path":"src/a.rs","mode":"100644","type":"blob","sha":"a"},{"path":"src/b.rs","mode":"100644","type":"blob","sha":"b"},{"path":"src/c.rs","mode":"100644","type":"blob","sha":"c"}]}"#,
+            )
+            .create();
+        let _a = server
+            .mock("GET", "/repos/owner/repo/contents/src/a.rs?ref=main")
+            .match_header("accept", "application/vnd.github.raw")
+            .with_status(200)
+            .with_body("fn a() {}")
+            .create();
+        let _b = server
+            .mock("GET", "/repos/owner/repo/contents/src/b.rs?ref=main")
+            .match_header("accept", "application/vnd.github.raw")
+            .with_status(503)
+            .with_body("boom")
+            .create();
+        let _c = server
+            .mock("GET", "/repos/owner/repo/contents/src/c.rs?ref=main")
+            .match_header("accept", "application/vnd.github.raw")
+            .expect(0)
+            .with_status(200)
+            .with_body("fn c() {}")
+            .create();
+
+        let dir = tempdir().expect("tempdir");
+        let options = failing_directory_options(server.url(), dir.path().join("downloads"), false);
+        let runner = Runner::new(
+            RuntimeConfig {
+                api_base: server.url(),
+            },
+            Output::new(false, Language::En),
+        );
+
+        let error = runner
+            .run(&options)
+            .expect_err("fail-fast directory failure should fail the command");
+
+        match error {
+            AppError::DirectoryTransfer {
+                failures,
+                stats,
+                aborted_early,
+                ..
+            } => {
+                assert_eq!(failures.len(), 1);
+                assert_eq!(stats.downloaded, 1);
+                assert!(aborted_early);
+            }
+            other => panic!("expected aggregate directory failure, got {other:?}"),
+        }
+    }
+
     #[test]
     fn bounded_work_uses_requested_concurrency() {
         let in_flight = Arc::new(AtomicUsize::new(0));
         let max_in_flight = Arc::new(AtomicUsize::new(0));
         let jobs: Vec<_> = (0..6).collect();
 
-        let results = run_bounded_work(&jobs, 2, &|_| {
+        let outcome = run_bounded_work(&jobs, 2, false, &|_| {
             let current = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             max_in_flight.fetch_max(current, Ordering::SeqCst);
             thread::sleep(Duration::from_millis(20));
             in_flight.fetch_sub(1, Ordering::SeqCst);
             Ok::<(), AppError>(())
-        })
-        .expect("work should succeed");
+        });
 
-        assert_eq!(results.len(), 6);
+        assert_eq!(outcome.results.len(), 6);
+        assert!(outcome.errors.is_empty());
+        assert!(!outcome.aborted_early);
         assert_eq!(max_in_flight.load(Ordering::SeqCst), 2);
     }
 
     #[test]
-    fn bounded_work_returns_error_when_any_job_fails() {
-        let jobs: Vec<_> = (0..5).collect();
+    fn bounded_work_fail_fast_stops_after_failing_batch() {
+        let jobs: Vec<_> = (0..6).collect();
 
-        let error = run_bounded_work(&jobs, 3, &|job| {
-            if job == 3 {
+        let outcome = run_bounded_work(&jobs, 2, false, &|job| {
+            if job == 1 {
                 Err(AppError::InvalidPath("boom".to_string()))
             } else {
                 Ok(())
             }
-        })
-        .expect_err("one failing job should fail the batch");
+        });
 
-        assert!(matches!(error, AppError::InvalidPath(message) if message == "boom"));
+        assert_eq!(outcome.results.len(), 1);
+        assert_eq!(outcome.errors.len(), 1);
+        assert!(outcome.aborted_early);
+    }
+
+    #[test]
+    fn bounded_work_keep_going_collects_all_failures() {
+        let jobs: Vec<_> = (0..6).collect();
+
+        let outcome = run_bounded_work(&jobs, 2, true, &|job| {
+            if job % 2 == 1 {
+                Err(AppError::InvalidPath(format!("boom-{job}")))
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(outcome.results.len(), 3);
+        assert_eq!(outcome.errors.len(), 3);
+        assert!(!outcome.aborted_early);
     }
 
     #[test]
@@ -854,53 +1545,167 @@ mod tests {
     }
 
     #[test]
-    fn build_directory_download_jobs_preserves_relative_paths() {
-        let runner = Runner::new(RuntimeConfig::default(), Output::new(false, Language::En));
-        let directory_target = Path::new("/tmp/downloads/src");
-        let files = vec![
-            ContentItem {
-                name: Some("main.rs".to_string()),
-                path: Some("src/main.rs".to_string()),
-                kind: Some("file".to_string()),
-                download_url: Some("https://example.invalid/main.rs".to_string()),
-            },
-            ContentItem {
-                name: Some("lib.rs".to_string()),
-                path: Some("src/nested/lib.rs".to_string()),
-                kind: Some("file".to_string()),
-                download_url: Some("https://example.invalid/nested/lib.rs".to_string()),
-            },
-        ];
+    fn tree_enumeration_preserves_relative_paths_and_rev() {
+        let mut server = Server::new();
+        let _tree = server
+            .mock("GET", "/repos/owner/repo/git/trees/main?recursive=1")
+            .with_status(200)
+            .with_body(
+                r#"{"sha":"tree-sha","truncated":false,"tree":[{"path":"src/main.rs","mode":"100644","type":"blob","sha":"a","size":12},{"path":"src/nested/lib.rs","mode":"100755","type":"blob","sha":"b","size":18}]}"#,
+            )
+            .create();
 
+        let client = build_client().expect("client");
+        let api_base = server.url();
+        let options = test_options(api_base.clone(), "src", PathBuf::from("/tmp/downloads"));
+        let runner = test_runner(&api_base);
+        let mut stats = DownloadStats::default();
         let jobs = runner
-            .build_directory_download_jobs(directory_target, "src", files)
+            .collect_directory_jobs(
+                &client,
+                &options,
+                &mut stats,
+                "src",
+                Path::new("/tmp/downloads/src"),
+                "main",
+                false,
+            )
             .expect("jobs should build");
 
         assert_eq!(jobs.len(), 2);
         assert_eq!(jobs[0].shown_path, "main.rs");
-        assert_eq!(jobs[0].local_target, directory_target.join("main.rs"));
+        assert_eq!(
+            jobs[0].local_target,
+            PathBuf::from("/tmp/downloads/src/main.rs")
+        );
+        assert_eq!(jobs[0].rev.as_deref(), Some("main"));
+        assert_eq!(jobs[0].item.download_url, None);
         assert_eq!(jobs[1].shown_path, "nested/lib.rs");
-        assert_eq!(jobs[1].local_target, directory_target.join("nested/lib.rs"));
+        assert_eq!(
+            jobs[1].local_target,
+            PathBuf::from("/tmp/downloads/src/nested/lib.rs")
+        );
     }
 
     #[test]
-    fn build_directory_download_jobs_rejects_unsafe_metadata_paths() {
-        let runner = Runner::new(RuntimeConfig::default(), Output::new(false, Language::En));
-        let directory_target = Path::new("/tmp/downloads/src");
-        let files = vec![ContentItem {
-            name: Some("outside.rs".to_string()),
-            path: Some("src/../outside.rs".to_string()),
-            kind: Some("file".to_string()),
-            download_url: Some("https://example.invalid/outside.rs".to_string()),
-        }];
-
-        let error = runner
-            .build_directory_download_jobs(directory_target, "src", files)
-            .expect_err("unsafe path should fail");
-
-        assert!(
-            matches!(error, AppError::InvalidPath(message) if message.contains("unsafe directory metadata path"))
+    fn tree_enumeration_reads_more_than_contents_api_limit() {
+        let mut server = Server::new();
+        let entries: Vec<String> = (0..1001)
+            .map(|index| {
+                format!(
+                    r#"{{"path":"src/f{}.txt","mode":"100644","type":"blob","sha":"s{}","size":3}}"#,
+                    index, index
+                )
+            })
+            .collect();
+        let body = format!(
+            r#"{{"sha":"tree-sha","truncated":false,"tree":[{}]}}"#,
+            entries.join(",")
         );
+
+        let _tree = server
+            .mock("GET", "/repos/owner/repo/git/trees/main?recursive=1")
+            .with_status(200)
+            .with_body(body)
+            .create();
+
+        let client = build_client().expect("client");
+        let api_base = server.url();
+        let options = test_options(api_base.clone(), "src", PathBuf::from("/tmp/downloads"));
+        let runner = test_runner(&api_base);
+        let mut stats = DownloadStats::default();
+        let jobs = runner
+            .collect_directory_jobs(
+                &client,
+                &options,
+                &mut stats,
+                "src",
+                Path::new("/tmp/downloads/src"),
+                "main",
+                false,
+            )
+            .expect("jobs should build");
+
+        assert_eq!(jobs.len(), 1001);
+    }
+
+    #[test]
+    fn truncated_tree_falls_back_to_per_subtree_requests() {
+        let mut server = Server::new();
+        let _truncated = server
+            .mock("GET", "/repos/owner/repo/git/trees/main?recursive=1")
+            .with_status(200)
+            .with_body(
+                r#"{"sha":"tree-sha","truncated":true,"tree":[{"path":"src","mode":"040000","type":"tree","sha":"subtree-sha"}]}"#,
+            )
+            .create();
+        let _root = server
+            .mock("GET", "/repos/owner/repo/git/trees/main")
+            .with_status(200)
+            .with_body(
+                r#"{"sha":"tree-sha","truncated":false,"tree":[{"path":"src","mode":"040000","type":"tree","sha":"subtree-sha"}]}"#,
+            )
+            .create();
+        let _subtree = server
+            .mock("GET", "/repos/owner/repo/git/trees/subtree-sha?recursive=1")
+            .with_status(200)
+            .with_body(
+                r#"{"sha":"subtree-sha","truncated":false,"tree":[{"path":"main.rs","mode":"100644","type":"blob","sha":"a","size":12}]}"#,
+            )
+            .create();
+
+        let client = build_client().expect("client");
+        let api_base = server.url();
+        let options = test_options(api_base.clone(), "src", PathBuf::from("/tmp/downloads"));
+        let runner = test_runner(&api_base);
+        let mut stats = DownloadStats::default();
+        let jobs = runner
+            .collect_directory_jobs(
+                &client,
+                &options,
+                &mut stats,
+                "src",
+                Path::new("/tmp/downloads/src"),
+                "main",
+                false,
+            )
+            .expect("jobs should build");
+
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].shown_path, "main.rs");
+    }
+
+    #[test]
+    fn tree_enumeration_skips_symlinks_and_submodules() {
+        let mut server = Server::new();
+        let _tree = server
+            .mock("GET", "/repos/owner/repo/git/trees/main?recursive=1")
+            .with_status(200)
+            .with_body(
+                r#"{"sha":"tree-sha","truncated":false,"tree":[{"path":"src/main.rs","mode":"100644","type":"blob","sha":"a"},{"path":"src/link","mode":"120000","type":"blob","sha":"b"},{"path":"src/sub","mode":"160000","type":"commit","sha":"c"}]}"#,
+            )
+            .create();
+
+        let client = build_client().expect("client");
+        let api_base = server.url();
+        let options = test_options(api_base.clone(), "src", PathBuf::from("/tmp/downloads"));
+        let runner = test_runner(&api_base);
+        let mut stats = DownloadStats::default();
+        let jobs = runner
+            .collect_directory_jobs(
+                &client,
+                &options,
+                &mut stats,
+                "src",
+                Path::new("/tmp/downloads/src"),
+                "main",
+                false,
+            )
+            .expect("jobs should build");
+
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].shown_path, "main.rs");
+        assert_eq!(stats.skipped_entries, 2);
     }
 
     #[test]
@@ -933,6 +1738,7 @@ mod tests {
             repo: "owner/repo".to_string(),
             remote_path: "README.md".to_string(),
             local_target: target.clone(),
+            local_target_is_dir_hint: false,
             git_ref: None,
             token: None,
             api_base: server.url(),
@@ -941,6 +1747,7 @@ mod tests {
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            keep_going: false,
             json: false,
             debug: false,
             no_color: true,
@@ -993,6 +1800,7 @@ mod tests {
             repo: "owner/repo".to_string(),
             remote_path: "README.md".to_string(),
             local_target: target.clone(),
+            local_target_is_dir_hint: false,
             git_ref: None,
             token: None,
             api_base: server.url(),
@@ -1001,6 +1809,7 @@ mod tests {
             concurrency: 4,
             language: Language::En,
             overwrite: true,
+            keep_going: false,
             json: false,
             debug: false,
             no_color: true,
@@ -1025,28 +1834,39 @@ mod tests {
     #[test]
     fn skips_existing_directory_files_by_default() {
         let mut server = Server::new();
-        let existing_url = format!("{}/raw/src/existing.rs", server.url());
-        let new_url = format!("{}/raw/src/new.rs", server.url());
 
         let _listing = server
             .mock("GET", "/repos/owner/repo/contents/src")
             .match_header("accept", "application/vnd.github+json")
             .with_status(200)
-            .with_body(format!(
-                r#"[{{"name":"existing.rs","path":"src/existing.rs","type":"file","download_url":"{}"}},{{"name":"new.rs","path":"src/new.rs","type":"file","download_url":"{}"}}]"#,
-                existing_url, new_url
-            ))
+            .with_body("[]")
+            .create();
+
+        let _repo = server
+            .mock("GET", "/repos/owner/repo")
+            .with_status(200)
+            .with_body(r#"{"default_branch":"main","private":false}"#)
+            .create();
+
+        let _tree = server
+            .mock("GET", "/repos/owner/repo/git/trees/main?recursive=1")
+            .with_status(200)
+            .with_body(
+                r#"{"sha":"tree-sha","truncated":false,"tree":[{"path":"src/existing.rs","mode":"100644","type":"blob","sha":"a","size":12},{"path":"src/new.rs","mode":"100644","type":"blob","sha":"b","size":13}]}"#,
+            )
             .create();
 
         let existing_download = server
-            .mock("GET", "/raw/src/existing.rs")
+            .mock("GET", "/repos/owner/repo/contents/src/existing.rs?ref=main")
+            .match_header("accept", "application/vnd.github.raw")
             .expect(0)
             .with_status(200)
             .with_body("should not be downloaded")
             .create();
 
         let new_download = server
-            .mock("GET", "/raw/src/new.rs")
+            .mock("GET", "/repos/owner/repo/contents/src/new.rs?ref=main")
+            .match_header("accept", "application/vnd.github.raw")
             .expect(1)
             .with_status(200)
             .with_body("pub fn fresh() {}")
@@ -1062,6 +1882,7 @@ mod tests {
             repo: "owner/repo".to_string(),
             remote_path: "src".to_string(),
             local_target: dir.path().join("downloads"),
+            local_target_is_dir_hint: false,
             git_ref: None,
             token: None,
             api_base: server.url(),
@@ -1070,6 +1891,7 @@ mod tests {
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            keep_going: false,
             json: false,
             debug: false,
             no_color: true,
@@ -1099,28 +1921,39 @@ mod tests {
     #[test]
     fn overwrites_existing_directory_files_when_enabled() {
         let mut server = Server::new();
-        let existing_url = format!("{}/raw/src/existing.rs", server.url());
-        let new_url = format!("{}/raw/src/new.rs", server.url());
 
         let _listing = server
             .mock("GET", "/repos/owner/repo/contents/src")
             .match_header("accept", "application/vnd.github+json")
             .with_status(200)
-            .with_body(format!(
-                r#"[{{"name":"existing.rs","path":"src/existing.rs","type":"file","download_url":"{}"}},{{"name":"new.rs","path":"src/new.rs","type":"file","download_url":"{}"}}]"#,
-                existing_url, new_url
-            ))
+            .with_body("[]")
+            .create();
+
+        let _repo = server
+            .mock("GET", "/repos/owner/repo")
+            .with_status(200)
+            .with_body(r#"{"default_branch":"main","private":false}"#)
+            .create();
+
+        let _tree = server
+            .mock("GET", "/repos/owner/repo/git/trees/main?recursive=1")
+            .with_status(200)
+            .with_body(
+                r#"{"sha":"tree-sha","truncated":false,"tree":[{"path":"src/existing.rs","mode":"100644","type":"blob","sha":"a","size":12},{"path":"src/new.rs","mode":"100644","type":"blob","sha":"b","size":13}]}"#,
+            )
             .create();
 
         let existing_download = server
-            .mock("GET", "/raw/src/existing.rs")
+            .mock("GET", "/repos/owner/repo/contents/src/existing.rs?ref=main")
+            .match_header("accept", "application/vnd.github.raw")
             .expect(1)
             .with_status(200)
             .with_body("pub fn replaced() {}")
             .create();
 
         let new_download = server
-            .mock("GET", "/raw/src/new.rs")
+            .mock("GET", "/repos/owner/repo/contents/src/new.rs?ref=main")
+            .match_header("accept", "application/vnd.github.raw")
             .expect(1)
             .with_status(200)
             .with_body("pub fn fresh() {}")
@@ -1136,6 +1969,7 @@ mod tests {
             repo: "owner/repo".to_string(),
             remote_path: "src".to_string(),
             local_target: dir.path().join("downloads"),
+            local_target_is_dir_hint: false,
             git_ref: None,
             token: None,
             api_base: server.url(),
@@ -1144,6 +1978,7 @@ mod tests {
             concurrency: 4,
             language: Language::En,
             overwrite: true,
+            keep_going: false,
             json: false,
             debug: false,
             no_color: true,
@@ -1198,6 +2033,7 @@ mod tests {
             repo: "owner/repo".to_string(),
             remote_path: "README.md".to_string(),
             local_target: target.clone(),
+            local_target_is_dir_hint: false,
             git_ref: None,
             token: None,
             api_base: format!("{}/enterprise/api/v3/", api_server.url()),
@@ -1206,6 +2042,7 @@ mod tests {
             concurrency: 4,
             language: Language::En,
             overwrite: false,
+            keep_going: false,
             json: false,
             debug: false,
             no_color: true,
