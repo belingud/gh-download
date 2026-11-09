@@ -36,6 +36,42 @@ impl PrefixProxyMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SymlinkMode {
+    #[default]
+    Auto,
+    Link,
+    Skip,
+}
+
+impl SymlinkMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Link => "link",
+            Self::Skip => "skip",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LfsMode {
+    #[default]
+    Error,
+    Media,
+}
+
+impl LfsMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Media => "media",
+        }
+    }
+}
+
 #[derive(Debug, Parser, Clone)]
 #[command(name = "gh-download", version, long_about = None)]
 pub(crate) struct ParsedCli {
@@ -65,6 +101,12 @@ pub(crate) struct ParsedCli {
 
     #[arg(long = "prefix-mode", value_enum, value_name = "MODE")]
     pub prefix_mode: Option<PrefixProxyMode>,
+
+    #[arg(long = "symlinks", value_enum, value_name = "MODE")]
+    pub symlinks: Option<SymlinkMode>,
+
+    #[arg(long = "lfs", value_enum, value_name = "MODE")]
+    pub lfs: Option<LfsMode>,
 
     #[arg(
         short = 'c',
@@ -127,6 +169,12 @@ pub struct Cli {
     #[arg(long = "prefix-mode", value_enum, value_name = "MODE")]
     pub prefix_mode: Option<PrefixProxyMode>,
 
+    #[arg(long = "symlinks", value_enum, value_name = "MODE")]
+    pub symlinks: SymlinkMode,
+
+    #[arg(long = "lfs", value_enum, value_name = "MODE")]
+    pub lfs: LfsMode,
+
     #[arg(
         short = 'c',
         long,
@@ -166,6 +214,8 @@ pub struct ResolvedOptions {
     pub api_base: String,
     pub proxy_base: String,
     pub prefix_mode: PrefixProxyMode,
+    pub symlinks: SymlinkMode,
+    pub lfs: LfsMode,
     pub concurrency: usize,
     pub language: Language,
     pub overwrite: bool,
@@ -187,6 +237,8 @@ impl From<ParsedCli> for CliInvocation {
             api_base: value.api_base,
             proxy_base: value.proxy_base,
             prefix_mode: value.prefix_mode,
+            symlinks: value.symlinks.unwrap_or_default(),
+            lfs: value.lfs.unwrap_or_default(),
             concurrency: explicit_concurrency.unwrap_or(DEFAULT_DOWNLOAD_CONCURRENCY),
             language: value.language,
             overwrite: value.overwrite,

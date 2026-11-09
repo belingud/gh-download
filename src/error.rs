@@ -114,6 +114,15 @@ pub enum AppError {
     #[error("resolved local target is a directory: {path}")]
     TargetIsDirectory { path: PathBuf },
 
+    #[error("unsupported repository entry {kind} at {path}")]
+    NonRegularEntry { path: String, kind: String },
+
+    #[error("Git LFS object at {remote_path} was not fetched")]
+    LfsObject {
+        remote_path: String,
+        local_path: PathBuf,
+    },
+
     #[error("invalid local path: {0}")]
     InvalidPath(String),
 }
@@ -363,6 +372,46 @@ pub fn classify_error(
             suggestions: vec![
                 "Pass a file path or a different directory for this file download".to_string(),
                 "If you intended a directory download, use a directory remote path or remove the conflicting directory first".to_string(),
+            ],
+        },
+        (Language::Zh, AppError::NonRegularEntry { path, kind }) => UserFacingError {
+            code: "non_regular_entry",
+            title,
+            reason: format!("远端路径 {} 是 {}，无法按普通文件下载", path, kind),
+            suggestions: vec![
+                "如果要下载目录，请把 --remote-path 指向目录".to_string(),
+                "子模块可单独对其仓库执行 gh-download".to_string(),
+                "符号链接请改为下载其目标文件所在目录".to_string(),
+            ],
+        },
+        (Language::En, AppError::NonRegularEntry { path, kind }) => UserFacingError {
+            code: "non_regular_entry",
+            title,
+            reason: format!("Remote path {} is a {} and cannot be downloaded as a regular file", path, kind),
+            suggestions: vec![
+                "If you wanted a directory, point the remote path at a directory".to_string(),
+                "Download submodule repositories separately with gh-download".to_string(),
+                "For symlinks, download the directory that contains the target file".to_string(),
+            ],
+        },
+        (Language::Zh, AppError::LfsObject { remote_path, .. }) => UserFacingError {
+            code: "lfs",
+            title,
+            reason: format!("{} 是 Git LFS 对象，当前没有获取到真实文件内容", remote_path),
+            suggestions: vec![
+                "使用 --lfs media 尝试从 GitHub media 主机获取（仅公共 GitHub）".to_string(),
+                "或使用 git clone / git lfs 获取该文件".to_string(),
+                "如果不希望下载 LFS 对象，请在下载前排除该文件".to_string(),
+            ],
+        },
+        (Language::En, AppError::LfsObject { remote_path, .. }) => UserFacingError {
+            code: "lfs",
+            title,
+            reason: format!("{} is a Git LFS object and the real file content was not fetched", remote_path),
+            suggestions: vec![
+                "Use --lfs media to try the GitHub media host (public GitHub only)".to_string(),
+                "Or fetch it with git clone / git lfs".to_string(),
+                "Exclude the file from the download if LFS objects are not wanted".to_string(),
             ],
         },
         (Language::Zh, AppError::UnexpectedApiResponse) => UserFacingError {

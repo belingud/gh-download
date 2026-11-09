@@ -78,6 +78,25 @@ pub(super) fn send_json_request(
         .map_err(|err| AppError::Json(err.to_string()))
 }
 
+pub(super) fn fetch_bytes(
+    client: &Client,
+    url: &str,
+    accept: Option<&str>,
+    token: Option<&str>,
+    limit: usize,
+) -> Result<Vec<u8>, AppError> {
+    let response = send_request(client, url, accept, token)?;
+    let mut reader = response.take(limit as u64);
+    let mut buffer = Vec::new();
+    reader
+        .read_to_end(&mut buffer)
+        .map_err(|source| AppError::Transfer {
+            path: PathBuf::from("<repository-response>"),
+            message: format!("{} ({})", source, url),
+        })?;
+    Ok(buffer)
+}
+
 pub(super) fn stream_download(
     client: &Client,
     url: &str,

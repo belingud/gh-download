@@ -7,7 +7,7 @@ Define the opt-in debug diagnostics for request construction and raw download st
 ## Requirements
 
 ### Requirement: CLI supports explicit debug output for download flow diagnostics
-The CLI SHALL support an explicit debug mode that prints detailed download-flow diagnostics only when enabled by CLI argument or environment variable. The debug output MUST be disabled by default and MUST NOT alter the normal download strategy on its own. When JSON output mode is enabled at the same time, debug diagnostics SHALL continue to be emitted on stderr so the JSON payload on stdout remains machine-readable.
+The CLI SHALL support an explicit debug mode that prints detailed download-flow diagnostics only when enabled by CLI argument or environment variable. The debug output MUST be disabled by default and MUST NOT alter the normal download strategy on its own. The diagnostics MUST include the effective repository and API base, the resolved commit SHA for the transfer, the generated GitHub metadata URL used for file-or-directory detection, the tree metadata URL and enumeration mode used for directory enumeration, the detected token source label when one is recognized, the resolved raw file download URL, the generated prefix-proxy URL when applicable, and the selected raw download strategy. When JSON output mode is enabled at the same time, debug diagnostics SHALL continue to be emitted on stderr so the JSON payload on stdout remains machine-readable.
 
 #### Scenario: Debug mode is disabled by default
 - **WHEN** a user runs the CLI without enabling debug mode
@@ -15,7 +15,11 @@ The CLI SHALL support an explicit debug mode that prints detailed download-flow 
 
 #### Scenario: Debug mode prints request URLs, token source, and strategy choices
 - **WHEN** a user enables debug mode during a download
-- **THEN** the CLI prints the generated GitHub metadata URL, the detected token source label when one is recognized, the resolved raw file download URL, the generated prefix-proxy URL when applicable, and the selected raw download strategy
+- **THEN** the CLI prints the resolved commit SHA, the generated metadata URLs, the enumeration mode, the detected token source label when one is recognized, the resolved raw file download URL, the generated prefix-proxy URL when applicable, and the selected raw download strategy
+
+#### Scenario: Debug mode prints directory enumeration diagnostics
+- **WHEN** a user enables debug mode for a directory download
+- **THEN** the CLI prints the recursive tree metadata URL and whether the enumeration used the recursive response or the truncated-response fallback
 
 #### Scenario: Debug mode does not change download behavior
 - **WHEN** a user enables debug mode

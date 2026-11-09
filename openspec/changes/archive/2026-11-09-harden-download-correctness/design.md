@@ -49,7 +49,7 @@ Select the primary byte-transfer route from token presence, repository visibilit
 | No token | Constructed raw URL for public GitHub; proxy modes apply | Yes |
 | Token + public repository | Constructed raw URL (anonymous, no token forwarded); API raw fallback | Yes |
 | Token + private repository | Contents raw media type with token | Not applicable (no anonymous raw URL attempt) |
-| Custom `--api-base` (GHE) | Contents raw media type with token | Not applicable |
+| Custom `--api-base` (GHE) | API-provided raw download URL, Contents raw media fallback on the same base | Not applicable |
 
 When a token is present, fetch `GET /repos/{owner}/{repo}` once to learn `private` (the same call supplies `default_branch`, so it is not wasted). Constructed raw URLs are only used for the default public GitHub API base, where the host is known: `https://raw.githubusercontent.com/{owner}/{repo}/{sha}/{encoded path}`.
 
@@ -119,7 +119,7 @@ Add `src/download/tree.rs` (tree response models, recursive enumeration, truncat
 - [Symlink `link` behavior differs by platform] → Fail per entry on unsupported platforms; document in README and help.
 - [More warning categories could make output noisy] → Warnings are per category per file only when actionable, and skipped counts are aggregated in completion/JSON.
 - [Commit pinning can make `--ref` resolution fail earlier for unusual refs] → Surface a specific error identifying the requested ref; existing `--ref` support (branch/tag/SHA) is unchanged.
-- [GHE users lose prefix-proxy modes for file bytes] → They still get token-authenticated raw media downloads; documented as an explicit limitation instead of a silent behavior change.
+- [GHE deployments expose raw content on the same base but not always a reliable raw hostname] → Keep the API-provided download URL as the primary route and use the Contents raw media type on the configured base as fallback; metadata is never routed through prefix proxies.
 
 ## Migration Plan
 

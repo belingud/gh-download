@@ -31,7 +31,9 @@ Typical use cases:
 - Existing local entries (files or symlinks) are not overwritten by default. Use `--overwrite` explicitly if replacement is intended.
 - Directory enumeration uses the GitHub Git Trees API, so directories above the Contents API 1,000-entry limit are enumerated completely. When `--ref` is omitted, the default branch is resolved first.
 - With a token and a private repository, file bytes are downloaded through the token-authenticated Contents raw media type instead of a doomed anonymous raw attempt.
-- `--json` failures include a stable `error.code`; directory transfer failures also include partial `stats` and a `failed` array.
+- `--json` failures include a stable `error.code`; directory transfer failures also include partial `stats` and a `failed` array. Success output includes the resolved `ref_sha` and skipped symlink/submodule counts.
+- Every invocation is pinned to a resolved commit SHA before enumerating or downloading.
+- Symlinks, submodules, and Git LFS pointer files are handled explicitly: `--symlinks auto|link|skip` and `--lfs error|media`; Git LFS pointer text is never saved as the final file.
 - Raw file downloads can use prefix-proxy modes, but GitHub metadata API requests must not go through URL-prefix proxies such as `gh-proxy`.
 - When a token is present, authentication credentials are not forwarded to a public prefix proxy.
 - `--json` switches `stdout` to a single final JSON document. If `--debug` is also enabled, debug output still goes to `stderr`.
@@ -105,6 +107,8 @@ Positional arguments:
 - `--concurrency <n>` or `-c <n>`: Specify the maximum number of concurrent file downloads for directory transfers. Minimum `1`, default `4`
 - `--overwrite`: Overwrite existing local files
 - `--keep-going`: Continue a directory transfer after a file failure and report every failed file
+- `--symlinks <auto|link|skip>`: Symbolic link handling (default `auto`, `link` is Unix-only)
+- `--lfs <error|media>`: Git LFS pointer handling (default `error`, `media` is public GitHub only)
 - `--json`: Emit the final result as JSON
 - `--lang <en|zh>`: Explicitly set the output language
 - `--debug`: Print request URLs, token source, and download strategy for debugging

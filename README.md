@@ -50,6 +50,8 @@ gh-download owner/repo src ./downloads
 - Download directory files concurrently with `--concurrency` or `-c`
 - Enumerate directories through the Git Trees API so directories larger than the Contents API 1,000-entry limit are downloaded completely
 - Continue a directory transfer after per-file failures with `--keep-going` and get a per-file failure report
+- Handle symlinks, submodules, and Git LFS pointer files explicitly instead of saving misleading file content
+- Pin each invocation to a resolved commit SHA and expose it in JSON and debug output
 - Skip existing local files by default, with explicit `--overwrite` support
 - Choose a branch, tag, or commit with `--ref`
 - Persist common defaults in `~/.config/gh-download/config.toml` or an explicit `--config` file
@@ -104,7 +106,7 @@ The compiled binary will be available at:
 Basic syntax:
 
 ```bash
-gh-download <repo> <remote-path> <local-target> [--config <path>] [--ref <ref>] [--token <token>] [--api-base <url>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--keep-going] [--json] [--lang <en|zh>] [--debug] [--no-color]
+gh-download <repo> <remote-path> <local-target> [--config <path>] [--ref <ref>] [--token <token>] [--api-base <url>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--keep-going] [--symlinks <auto|link|skip>] [--lfs <error|media>] [--json] [--lang <en|zh>] [--debug] [--no-color]
 ```
 
 Run `gh-download` without arguments to show the help screen in the effective language.
@@ -193,6 +195,8 @@ gh-download owner/repo docs ./docs --config ./gh-download.toml
 - `--concurrency`, `-c`: Maximum number of concurrent file downloads for directory transfers. Must be at least `1`; reads config file first and otherwise defaults to `4`
 - `--overwrite`: Replace existing local files instead of skipping them
 - `--keep-going`: Continue a directory transfer after a file failure, then report every failed file and the partial statistics
+- `--symlinks`: How to handle symbolic links: `auto` (default) follows links that resolve to regular files and skips other links, `link` creates local symbolic links on Unix, `skip` ignores all symlinks
+- `--lfs`: How to handle Git LFS pointer content: `error` (default) fails the file with an actionable error, `media` tries the GitHub media host (public GitHub downloads only)
 - `--json`: Emit one final machine-readable JSON result on stdout
 - `--lang`: Explicit output language, `en` or `zh`. Without `--lang`, config file `lang` overrides locale detection
 - `--debug`: Print debug diagnostics for request URLs, token source, and strategy selection
@@ -256,8 +260,9 @@ If you store a token in the config file, keep the file permissions appropriately
 
 ### Directory download concurrency
 
-- Directory downloads enumerate the remote subtree with the GitHub Git Trees API; when GitHub reports a truncated tree response, the CLI falls back to per-subtree tree requests so a directory with more than the Contents API 1,000-entry limit is still enumerated completely
-- When `--ref` is omitted, directory downloads resolve the repository default branch before enumerating
+- Directory downloads enumerate the remote subtree with the GitHub Git Trees API; the CLI resolves the requested directory's tree SHA first, so downloading a nested folder does not fetch the whole repository tree. When GitHub reports a truncated tree response, or the tree response cannot be parsed because it exceeded GitHub's tree size cap, the CLI falls back to non-recursive per-subtree tree requests so a directory with more than the Contents API 1,000-entry limit is still enumerated completely
+- Every invocation resolves the effective ref (or the repository default branch when `--ref` is omitted) to an immutable commit SHA before enumerating and downloading, so a branch that moves mid-transfer cannot mix revisions
+- The resolved commit SHA is reported in JSON output (`ref_sha`) and debug output (`commit-sha`)
 - Directory downloads then download files with up to `4` concurrent transfers by default when neither CLI nor config specifies another value
 - Use `--concurrency <n>` or `-c <n>` to raise or lower the maximum number of in-flight file downloads for a directory transfer
 - Use `--concurrency 1` or `-c 1` if you want an explicit sequential mode for troubleshooting or low-resource environments
@@ -274,16 +279,24 @@ If you store a token in the config file, keep the file permissions appropriately
 - A trailing separator on the local target means directory intent: `gh-download owner/repo README.md ./downloads/` creates `downloads/` and writes `README.md` inside it
 - Skip decisions are based on whether an entry already exists at the resolved local file target; the CLI does not compare file contents in this mode
 
+### Repository entry handling
+
+- Directory enumeration classifies entries from Git tree metadata: regular files, symlinks, and submodules
+- `--symlinks auto` (the default) follows a symlink that resolves to a regular file and skips symlinks that resolve to directories or submodules with a warning; `--symlinks skip` skips every symlink; `--symlinks link` creates a local symbolic link pointing at the repository target (Unix platforms)
+- Submodule entries are skipped with a warning that includes the submodule repository URL and pinned commit; download submodule repositories separately if needed
+- After a file body is downloaded, the CLI detects Git LFS pointer content. With `--lfs error` (the default) it fails the file with an actionable error and never commits the pointer text; with `--lfs media` it retries the object through the GitHub media host and falls back to the error when that is unavailable. LFS media retrieval is only defined for the default public GitHub API base
+- A single-file invocation whose remote path resolves to a submodule or to a symlink that does not resolve to a regular file fails with an actionable error
+
 ### Debug behavior
 
 - `--debug` and `GH_DOWNLOAD_DEBUG` enable flow-level diagnostics
-- Debug output includes the generated GitHub metadata URL, the detected token source label, the resolved repository privacy, the Git Trees metadata URL and enumeration mode for directory transfers, the resolved raw download URL, the generated prefix URL when applicable, and the selected raw download strategy
+- Debug output includes the effective API base, the generated GitHub metadata URL, the detected token source label, the resolved repository privacy, the resolved commit SHA and commit URL, the Git Trees metadata URL and enumeration mode for directory transfers, symlink blob and LFS media URLs when used, the resolved raw download URL, the generated prefix URL when applicable, and the selected raw download strategy
 - Debug output is written to `stderr` and does not change download behavior
 
 ### JSON output
 
 - `--json` switches stdout to one final machine-readable JSON document instead of the default human-readable startup, progress, completion, or error text
-- JSON success output includes `success`, `saved_path`, and aggregate download statistics
+- JSON success output includes `success`, `saved_path`, the resolved `ref_sha`, and aggregate download statistics that distinguish downloaded files, skipped existing files, skipped unsupported entries, skipped symlinks, and skipped submodules
 - JSON failure output includes `success`, and under `error` a stable language-independent `code`, `title`, `reason`, and `suggestions`
 - Directory transfer failures also include partial `stats` and a `failed` array with one entry per failed remote path, local path, and reason
 - JSON field names are stable English identifiers even when the message text follows the effective language
@@ -322,7 +335,7 @@ Success output:
 ⬇️ Download:nested/mod.rs
 -------------------------------------
 ✅ Done: owner/repo src saved to /tmp/downloads/src
-Downloaded 3 files, skipped 0 existing files, skipped 0 unsupported entries
+Downloaded 3 files, skipped 0 existing files, skipped 0 unsupported entries, skipped 0 symlinks, skipped 0 submodules
 ```
 
 Skip-existing output:
@@ -337,7 +350,7 @@ Skip-existing output:
 ⏭ Skipping existing file: README.md
 -------------------------------------
 ✅ Done: owner/repo README.md saved to /tmp/README.md
-Downloaded 0 files, skipped 1 existing files, skipped 0 unsupported entries
+Downloaded 0 files, skipped 1 existing files, skipped 0 unsupported entries, skipped 0 symlinks, skipped 0 submodules
 ```
 
 Prefix-proxy output:
@@ -371,10 +384,13 @@ JSON output:
 {
   "success": true,
   "saved_path": "/tmp/README.md",
+  "ref_sha": "0123456789abcdef0123456789abcdef01234567",
   "stats": {
     "files_downloaded": 1,
     "skipped_existing_files": 0,
-    "skipped_unsupported_entries": 0
+    "skipped_unsupported_entries": 0,
+    "skipped_symlinks": 0,
+    "skipped_submodules": 0
   }
 }
 ```

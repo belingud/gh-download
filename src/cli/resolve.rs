@@ -7,6 +7,8 @@ use crate::i18n::Language;
 
 use super::config::{FileConfig, expand_home, load_active_config};
 use super::types::{Cli, PrefixProxyMode, ResolvedOptions};
+#[cfg(test)]
+use super::types::{LfsMode, SymlinkMode};
 
 const DEBUG_ENV_VAR: &str = "GH_DOWNLOAD_DEBUG";
 const PREFIX_MODE_ENV_VAR: &str = "GH_DOWNLOAD_PREFIX_MODE";
@@ -72,6 +74,8 @@ pub(crate) fn resolve_cli_with_config(
         api_base,
         proxy_base,
         prefix_mode,
+        symlinks: cli.symlinks,
+        lfs: cli.lfs,
         concurrency: resolve_concurrency(
             explicit_concurrency,
             config.and_then(|value| value.concurrency),
@@ -487,6 +491,8 @@ mod tests {
             api_base: None,
             proxy_base: None,
             prefix_mode: None,
+            symlinks: SymlinkMode::Auto,
+            lfs: LfsMode::Error,
             concurrency: 4,
             language: None,
             overwrite: false,
@@ -530,6 +536,8 @@ mod tests {
             api_base: Some(" https://ghe.example.com/api/v3 ".to_string()),
             proxy_base: None,
             prefix_mode: Some(PrefixProxyMode::Prefer),
+            symlinks: SymlinkMode::Auto,
+            lfs: LfsMode::Error,
             concurrency: 8,
             language: Some(Language::En),
             overwrite: true,
@@ -557,6 +565,8 @@ mod tests {
             api_base: None,
             proxy_base: None,
             prefix_mode: None,
+            symlinks: SymlinkMode::Auto,
+            lfs: LfsMode::Error,
             concurrency: 12,
             language: Some(Language::En),
             overwrite: false,

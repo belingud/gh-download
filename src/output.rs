@@ -140,9 +140,7 @@ impl Output {
         repo: &str,
         remote_path: &str,
         saved_path: &Path,
-        files_downloaded: usize,
-        skipped_existing_files: usize,
-        skipped_entries: usize,
+        stats: &DownloadStats,
     ) {
         if self.json_mode {
             return;
@@ -151,15 +149,13 @@ impl Output {
         self.with_io_lock(|| {
             self.print_separator();
             println!("{}", self.message_completion(repo, remote_path, saved_path));
-            if files_downloaded > 1 || skipped_existing_files > 0 || skipped_entries > 0 {
-                println!(
-                    "{}",
-                    self.message_download_stats(
-                        files_downloaded,
-                        skipped_existing_files,
-                        skipped_entries,
-                    )
-                );
+            if stats.files_downloaded > 1
+                || stats.skipped_existing_files > 0
+                || stats.skipped_entries > 0
+                || stats.skipped_symlinks > 0
+                || stats.skipped_submodules > 0
+            {
+                println!("{}", self.message_download_stats(stats));
             }
         });
     }
@@ -185,8 +181,13 @@ impl Output {
         self.with_io_lock(|| eprintln!("{}", message));
     }
 
-    pub fn print_json_success(&self, saved_path: &Path, stats: &DownloadStats) {
-        self.print_stdout_line(&self.render_json_success(saved_path, stats));
+    pub fn print_json_success(
+        &self,
+        saved_path: &Path,
+        stats: &DownloadStats,
+        ref_sha: Option<&str>,
+    ) {
+        self.print_stdout_line(&self.render_json_success(saved_path, stats, ref_sha));
     }
 
     pub fn print_json_error(&self, error: &UserFacingError) {
@@ -320,21 +321,24 @@ impl Output {
         }
     }
 
-    fn message_download_stats(
-        &self,
-        files_downloaded: usize,
-        skipped_existing_files: usize,
-        skipped_entries: usize,
-    ) -> String {
+    fn message_download_stats(&self, stats: &DownloadStats) -> String {
         if self.language.is_chinese() {
             format!(
-                "共下载 {} 个文件，跳过 {} 个已存在文件，跳过 {} 个不支持条目",
-                files_downloaded, skipped_existing_files, skipped_entries
+                "共下载 {} 个文件，跳过 {} 个已存在文件，跳过 {} 个不支持条目，跳过 {} 个符号链接，跳过 {} 个子模块",
+                stats.files_downloaded,
+                stats.skipped_existing_files,
+                stats.skipped_entries,
+                stats.skipped_symlinks,
+                stats.skipped_submodules
             )
         } else {
             format!(
-                "Downloaded {} files, skipped {} existing files, skipped {} unsupported entries",
-                files_downloaded, skipped_existing_files, skipped_entries
+                "Downloaded {} files, skipped {} existing files, skipped {} unsupported entries, skipped {} symlinks, skipped {} submodules",
+                stats.files_downloaded,
+                stats.skipped_existing_files,
+                stats.skipped_entries,
+                stats.skipped_symlinks,
+                stats.skipped_submodules
             )
         }
     }
@@ -347,14 +351,22 @@ impl Output {
         }
     }
 
-    fn render_json_success(&self, saved_path: &Path, stats: &DownloadStats) -> String {
+    fn render_json_success(
+        &self,
+        saved_path: &Path,
+        stats: &DownloadStats,
+        ref_sha: Option<&str>,
+    ) -> String {
         serde_json::to_string_pretty(&JsonSuccessPayload {
             success: true,
             saved_path: saved_path.display().to_string(),
+            ref_sha: ref_sha.map(ToOwned::to_owned),
             stats: JsonStats {
                 files_downloaded: stats.files_downloaded,
                 skipped_existing_files: stats.skipped_existing_files,
                 skipped_unsupported_entries: stats.skipped_entries,
+                skipped_symlinks: stats.skipped_symlinks,
+                skipped_submodules: stats.skipped_submodules,
             },
         })
         .expect("json success payload")
@@ -373,6 +385,8 @@ impl Output {
                 files_downloaded: stats.downloaded,
                 skipped_existing_files: stats.skipped_existing,
                 skipped_unsupported_entries: stats.skipped_entries,
+                skipped_symlinks: 0,
+                skipped_submodules: 0,
             }),
             failed: details
                 .failed
@@ -416,6 +430,8 @@ impl Output {
 struct JsonSuccessPayload {
     success: bool,
     saved_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ref_sha: Option<String>,
     stats: JsonStats,
 }
 
@@ -424,6 +440,8 @@ struct JsonStats {
     files_downloaded: usize,
     skipped_existing_files: usize,
     skipped_unsupported_entries: usize,
+    skipped_symlinks: usize,
+    skipped_submodules: usize,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -500,8 +518,14 @@ mod tests {
         let output = Output::new(false, Language::En);
 
         assert_eq!(
-            output.message_download_stats(3, 2, 1),
-            "Downloaded 3 files, skipped 2 existing files, skipped 1 unsupported entries"
+            output.message_download_stats(&DownloadStats {
+                files_downloaded: 3,
+                skipped_existing_files: 2,
+                skipped_entries: 1,
+                skipped_symlinks: 0,
+                skipped_submodules: 0,
+            }),
+            "Downloaded 3 files, skipped 2 existing files, skipped 1 unsupported entries, skipped 0 symlinks, skipped 0 submodules"
         );
     }
 
@@ -522,15 +546,20 @@ mod tests {
             files_downloaded: 2,
             skipped_existing_files: 1,
             skipped_entries: 3,
+            skipped_symlinks: 0,
+            skipped_submodules: 0,
         };
 
-        let value: Value = serde_json::from_str(
-            &output.render_json_success(Path::new("/tmp/downloads/src"), &stats),
-        )
+        let value: Value = serde_json::from_str(&output.render_json_success(
+            Path::new("/tmp/downloads/src"),
+            &stats,
+            Some("0123456789abcdef0123456789abcdef01234567"),
+        ))
         .expect("valid json");
 
         assert_eq!(value["success"], true);
         assert_eq!(value["saved_path"], "/tmp/downloads/src");
+        assert_eq!(value["ref_sha"], "0123456789abcdef0123456789abcdef01234567");
         assert_eq!(value["stats"]["files_downloaded"], 2);
         assert_eq!(value["stats"]["skipped_existing_files"], 1);
         assert_eq!(value["stats"]["skipped_unsupported_entries"], 3);
@@ -643,6 +672,8 @@ mod tests {
             api_base: crate::DEFAULT_GITHUB_API_BASE.to_string(),
             proxy_base: String::new(),
             prefix_mode: crate::PrefixProxyMode::Direct,
+            symlinks: crate::cli::SymlinkMode::Auto,
+            lfs: crate::cli::LfsMode::Error,
             concurrency: 4,
             language: Language::En,
             overwrite: false,
@@ -655,6 +686,8 @@ mod tests {
             files_downloaded: 1,
             skipped_existing_files: 0,
             skipped_entries: 0,
+            skipped_symlinks: 0,
+            skipped_submodules: 0,
         };
 
         output.startup(&options);
@@ -665,11 +698,13 @@ mod tests {
             &options.repo,
             &options.remote_path,
             &options.local_target,
-            stats.files_downloaded,
-            stats.skipped_existing_files,
-            stats.skipped_entries,
+            &stats,
         );
-        output.print_json_success(Path::new("/tmp/output.json"), &stats);
+        output.print_json_success(
+            Path::new("/tmp/output.json"),
+            &stats,
+            Some("0123456789abcdef0123456789abcdef01234567"),
+        );
     }
 
     fn extract_json_document(text: &str) -> Option<&str> {

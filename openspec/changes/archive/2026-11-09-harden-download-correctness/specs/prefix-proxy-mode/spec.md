@@ -5,7 +5,7 @@ The CLI SHALL support an explicit prefix proxy mode for raw file downloads. The 
 
 The effective raw download strategy MUST be token-aware. When an effective token is available and the target repository is private, the CLI SHALL download file content through the token-authenticated GitHub Contents raw media type instead of first attempting an anonymous raw file URL, and it MUST NOT print a per-file anonymous raw failure warning. When the target repository is public, or when no token is available, the CLI SHALL use the raw file URL strategy with the configured prefix proxy mode. Prefix-proxy retries SHALL apply to anonymous raw URL attempts even when a token is configured, because those attempts carry no credential, and the CLI MUST NOT forward that token to the proxy.
 
-When the effective `api_base` is a custom GitHub Enterprise-compatible base, the CLI SHALL download file content through the token-authenticated Contents raw media type, and prefix proxy modes MUST NOT be applied to those raw-media requests or to metadata requests.
+When the effective `api_base` is a custom GitHub Enterprise-compatible base, metadata requests MUST use that base, and file downloads SHALL continue to use the raw file URL returned by that API with the Contents raw media type as the fallback; prefix proxy modes MUST NOT be applied to metadata requests.
 
 #### Scenario: Default mode uses direct raw download
 - **WHEN** a user runs the CLI without setting the prefix proxy mode in CLI arguments, configuration file, or environment variables
@@ -39,6 +39,6 @@ When the effective `api_base` is a custom GitHub Enterprise-compatible base, the
 - **WHEN** a token is configured, the target repository is public, prefix proxy mode is `fallback`, and an anonymous raw file URL attempt fails with a retryable error
 - **THEN** the CLI retries that raw file URL through the effective prefix proxy without forwarding the token
 
-#### Scenario: Custom API base uses raw media type
+#### Scenario: Custom API base keeps API-provided download URLs
 - **WHEN** the effective `api_base` is a custom GitHub Enterprise-compatible base
-- **THEN** the CLI downloads file content through the token-authenticated Contents raw media type for that API base, and metadata requests and raw-media requests are not routed through prefix proxies
+- **THEN** the CLI requests metadata from that base, uses the raw file URL returned by that API when available, falls back to the Contents raw media type on that base, and never routes metadata requests through prefix proxies

@@ -5,8 +5,8 @@ mod i18n;
 mod output;
 
 pub use cli::{
-    Cli, CliInvocation, PrefixProxyMode, ResolvedOptions, command, command_for_language,
-    parse_cli_from_args, parse_cli_from_env, parse_cli_invocation_from_args,
+    Cli, CliInvocation, LfsMode, PrefixProxyMode, ResolvedOptions, SymlinkMode, command,
+    command_for_language, parse_cli_from_args, parse_cli_from_env, parse_cli_invocation_from_args,
     parse_cli_invocation_from_env, pick_token, resolve_cli, resolve_debug, resolve_local_target,
     resolve_prefix_mode, resolve_proxy_base, try_parse_cli_invocation_from_args,
     try_parse_cli_invocation_from_env,
@@ -87,6 +87,7 @@ pub fn run_cli_invocation(invocation: CliInvocation) -> Result<RunOutcome, AppEr
     output.startup(&options);
     if options.debug {
         output.debug_line(&format!("[debug] token-source: {}", token_source));
+        output.debug_line(&format!("[debug] api-base: {}", options.api_base));
     }
     let runner = Runner::new(
         RuntimeConfig {
@@ -96,7 +97,11 @@ pub fn run_cli_invocation(invocation: CliInvocation) -> Result<RunOutcome, AppEr
     );
     let outcome = runner.run(&options)?;
     if options.json {
-        output.print_json_success(&outcome.saved_path, &outcome.stats);
+        output.print_json_success(
+            &outcome.saved_path,
+            &outcome.stats,
+            outcome.ref_sha.as_deref(),
+        );
     }
     Ok(outcome)
 }

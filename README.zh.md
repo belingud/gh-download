@@ -50,6 +50,8 @@ gh-download owner/repo src ./downloads
 - 支持通过 `--concurrency` 或 `-c` 并发下载目录中的文件
 - 目录枚举使用 Git Trees API，超过 Contents API 1,000 条限制的目录也能完整下载
 - 目录下载遇到单个文件失败时可使用 `--keep-going` 继续，并在最后汇总每个失败文件
+- 显式处理符号链接、子模块和 Git LFS pointer 文件，避免保存误导性的文件内容
+- 每次执行固定到解析后的 commit SHA，并在 JSON 与 debug 输出中返回该 SHA
 - 默认跳过本地已存在文件，并支持显式 `--overwrite`
 - 支持通过 `--ref` 指定分支、tag 或 commit
 - 支持把常用参数持久化到 `~/.config/gh-download/config.toml` 或显式 `--config` 文件
@@ -104,7 +106,7 @@ cargo build --release
 基本用法：
 
 ```bash
-gh-download <repo> <remote-path> <local-target> [--config <path>] [--ref <ref>] [--token <token>] [--api-base <url>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--keep-going] [--json] [--lang <en|zh>] [--debug] [--no-color]
+gh-download <repo> <remote-path> <local-target> [--config <path>] [--ref <ref>] [--token <token>] [--api-base <url>] [--proxy-base <url>] [--prefix-mode <direct|fallback|prefer>] [--concurrency <n>|-c <n>] [--overwrite] [--keep-going] [--symlinks <auto|link|skip>] [--lfs <error|media>] [--json] [--lang <en|zh>] [--debug] [--no-color]
 ```
 
 直接运行 `gh-download` 且不带参数时，会按当前生效语言显示帮助信息。
@@ -193,6 +195,8 @@ gh-download owner/repo docs ./docs --config ./gh-download.toml
 - `--concurrency`、`-c`: 目录下载时的最大并发文件数，最小为 `1`。会先读取配置文件，未设置时默认值为 `4`
 - `--overwrite`: 覆盖本地已存在文件，而不是默认跳过
 - `--keep-going`: 目录下载遇到单个文件失败后继续下载其余文件，最后汇总所有失败文件与部分统计
+- `--symlinks`: 符号链接处理方式：`auto`（默认）跟随指向普通文件的链接并跳过其他链接，`link` 在 Unix 上创建本地符号链接，`skip` 忽略所有符号链接
+- `--lfs`: Git LFS pointer 处理方式：`error`（默认）给出可操作的错误，`media` 尝试从 GitHub media 主机获取（仅公共 GitHub 下载）
 - `--json`: 在 stdout 输出一个最终的机器可读 JSON 结果
 - `--lang`: 显式指定输出语言，支持 `en` 和 `zh`。未提供 `--lang` 时，配置文件 `lang` 优先于 locale 检测
 - `--debug`: 打印请求 URL、token 来源和策略选择的调试信息
@@ -256,8 +260,9 @@ token = "xxxx"
 
 ### 目录下载并发行为
 
-- 目录下载通过 GitHub Git Trees API 枚举远端子目录树；如果 GitHub 返回 `truncated`，会回退为逐子树请求，因此单目录超过 Contents API 1,000 条限制时仍能完整枚举
-- 未指定 `--ref` 时，目录下载会先解析仓库默认分支再进行枚举
+- 目录下载通过 GitHub Git Trees API 枚举远端子目录树；CLI 会先定位目标目录自身的 tree SHA，因此下载嵌套目录时不会拉取整个仓库的树。如果 GitHub 返回 `truncated`，或响应因超过 GitHub 树大小上限而无法解析，会回退为逐子树请求，因此单目录超过 Contents API 1,000 条限制时仍能完整枚举
+- 每次执行都会先把生效的 ref（未指定 `--ref` 时使用仓库默认分支）解析成不可变的 commit SHA，再进行枚举与下载，因此下载期间分支移动不会混入不同版本
+- 解析出的 commit SHA 会出现在 JSON 输出（`ref_sha`）和 debug 输出（`commit-sha`）中
 - 枚举完成后，目录下载以默认最多 `4` 个并发传输下载文件，除非命令行或配置文件另行指定
 - 可通过 `--concurrency <n>` 或 `-c <n>` 提高或降低目录下载时同时进行的文件数
 - 如果需要显式顺序模式，便于排障或降低资源占用，可使用 `--concurrency 1` 或 `-c 1`
@@ -274,16 +279,24 @@ token = "xxxx"
 - 本地目标以路径分隔符结尾时按目录语义处理：`gh-download owner/repo README.md ./downloads/` 会创建 `downloads/` 并把 `README.md` 写入其中
 - 跳过判断只基于最终解析出的本地路径是否已存在，不会在该模式下比较文件内容
 
+### 仓库条目处理
+
+- 目录枚举基于 Git tree 元数据区分普通文件、符号链接和子模块
+- `--symlinks auto`（默认）会跟随解析为普通文件的符号链接，对解析为目录或子模块的链接给出警告并跳过；`--symlinks skip` 跳过所有符号链接；`--symlinks link` 创建指向仓库目标的本地符号链接（Unix 平台）
+- 子模块条目会被跳过，并在警告中包含子模块仓库 URL 与固定的 commit；如需要请单独下载子模块仓库
+- 文件内容下载完成后会检测 Git LFS pointer；`--lfs error`（默认）会以可操作的错误失败，绝不会把 pointer 文本当作最终文件；`--lfs media` 会尝试通过 GitHub media 主机获取，失败时回退为同样的错误。LFS media 获取仅适用于默认公共 GitHub API base
+- 单文件下载时，如果远端路径解析为子模块或无法解析为普通文件的符号链接，会给出可操作的错误
+
 ### Debug 行为
 
 - `--debug` 和 `GH_DOWNLOAD_DEBUG` 会开启流程级调试输出
-- 调试输出包含生成的 GitHub metadata URL、识别到的 token 来源标签、仓库是否私有、目录下载使用的 Git Trees URL 与枚举模式、解析出的 raw 下载 URL、适用时生成的前缀代理 URL，以及当前选择的 raw 下载策略
+- 调试输出包含生效的 API base、生成的 GitHub metadata URL、识别到的 token 来源标签、仓库是否私有、解析出的 commit SHA 与 commit URL、目录下载使用的 Git Trees URL 与枚举模式、适用时的符号链接 blob 与 LFS media URL、解析出的 raw 下载 URL、适用时生成的前缀代理 URL，以及当前选择的 raw 下载策略
 - 调试输出写到 `stderr`，不会改变下载行为
 
 ### JSON 输出
 
 - `--json` 会把 stdout 切换成一个最终的机器可读 JSON 文档，而不是默认的人类可读启动、进度、完成或错误文本
-- JSON 成功结果包含 `success`、`saved_path` 和聚合下载统计信息
+- JSON 成功结果包含 `success`、`saved_path`、解析出的 `ref_sha`，以及区分下载文件、跳过已存在文件、跳过不支持条目、跳过符号链接和跳过子模块的聚合统计信息
 - JSON 失败结果会在 `error` 对象下包含稳定的、与语言无关的 `code`，以及 `title`、`reason` 和 `suggestions`
 - 目录传输失败还会包含部分 `stats` 与 `failed` 数组，逐项列出失败的远端路径、本地路径和原因
 - 即使消息文本跟随当前生效语言，JSON 字段名也保持稳定的英文标识
@@ -322,7 +335,7 @@ token = "xxxx"
 ⬇️ 下载：nested/mod.rs
 -------------------------------------
 ✅ 完成：owner/repo 的 src 已保存到 /tmp/downloads/src
-共下载 3 个文件，跳过 0 个已存在文件，跳过 0 个不支持条目
+共下载 3 个文件，跳过 0 个已存在文件，跳过 0 个不支持条目，跳过 0 个符号链接，跳过 0 个子模块
 ```
 
 跳过已存在文件的输出：
@@ -337,7 +350,7 @@ token = "xxxx"
 ⏭ 跳过已存在文件：README.md
 -------------------------------------
 ✅ 完成：owner/repo 的 README.md 已保存到 /tmp/README.md
-共下载 0 个文件，跳过 1 个已存在文件，跳过 0 个不支持条目
+共下载 0 个文件，跳过 1 个已存在文件，跳过 0 个不支持条目，跳过 0 个符号链接，跳过 0 个子模块
 ```
 
 前缀代理输出：
@@ -371,10 +384,13 @@ JSON 输出：
 {
   "success": true,
   "saved_path": "/tmp/README.md",
+  "ref_sha": "0123456789abcdef0123456789abcdef01234567",
   "stats": {
     "files_downloaded": 1,
     "skipped_existing_files": 0,
-    "skipped_unsupported_entries": 0
+    "skipped_unsupported_entries": 0,
+    "skipped_symlinks": 0,
+    "skipped_submodules": 0
   }
 }
 ```

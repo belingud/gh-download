@@ -18,7 +18,7 @@ pub use self::resolve::{
     resolve_proxy_base,
 };
 pub(crate) use self::resolve::{resolve_cli_with_config, resolve_language};
-pub use self::types::{Cli, CliInvocation, PrefixProxyMode, ResolvedOptions};
+pub use self::types::{Cli, CliInvocation, LfsMode, PrefixProxyMode, ResolvedOptions, SymlinkMode};
 
 pub(crate) use self::config::{detect_language_from_args_env_and_config, load_active_config};
 

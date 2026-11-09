@@ -24,6 +24,8 @@ pub fn command_for_language(language: Language) -> clap::Command {
         .mut_arg("api_base", |arg| arg.help(api_base_help(language)))
         .mut_arg("proxy_base", |arg| arg.help(proxy_help(language)))
         .mut_arg("prefix_mode", |arg| arg.help(prefix_mode_help(language)))
+        .mut_arg("symlinks", |arg| arg.help(symlinks_help(language)))
+        .mut_arg("lfs", |arg| arg.help(lfs_help(language)))
         .mut_arg("concurrency", |arg| arg.help(concurrency_help(language)))
         .mut_arg("language", |arg| arg.help(language_help(language)))
         .mut_arg("overwrite", |arg| arg.help(overwrite_help(language)))
@@ -45,10 +47,10 @@ fn command_about(language: Language) -> &'static str {
 fn command_after_help(language: Language) -> &'static str {
     match language {
         Language::En => {
-            "Examples:\n  gh-download openai/openai-python README.md .\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo src ./downloads --keep-going\n  gh-download owner/repo README.md . --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh\n  gh-download owner/repo docs ./docs --config ./gh-download.toml"
+            "Examples:\n  gh-download openai/openai-python README.md .\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo src ./downloads --keep-going\n  gh-download owner/repo src ./downloads --symlinks skip\n  gh-download owner/repo src ./downloads --lfs media\n  gh-download owner/repo README.md . --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh\n  gh-download owner/repo docs ./docs --config ./gh-download.toml"
         }
         Language::Zh => {
-            "示例:\n  gh-download openai/openai-python README.md .\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo src ./downloads --keep-going\n  gh-download owner/repo README.md . --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh\n  gh-download owner/repo docs ./docs --config ./gh-download.toml"
+            "示例:\n  gh-download openai/openai-python README.md .\n  gh-download owner/repo src ./downloads --ref main\n  gh-download owner/repo src ./downloads --concurrency 8\n  gh-download owner/repo src ./downloads --overwrite\n  gh-download owner/repo src ./downloads --keep-going\n  gh-download owner/repo src ./downloads --symlinks skip\n  gh-download owner/repo src ./downloads --lfs media\n  gh-download owner/repo README.md . --json\n  gh-download owner/repo docs ./docs --api-base https://ghe.example.com/api/v3\n  gh-download owner/private-repo docs ./docs --token <token>\n  gh-download owner/repo docs ./docs --lang zh\n  gh-download owner/repo docs ./docs --config ./gh-download.toml"
         }
     }
 }
@@ -149,6 +151,28 @@ fn prefix_mode_help(language: Language) -> &'static str {
     }
 }
 
+fn symlinks_help(language: Language) -> &'static str {
+    match language {
+        Language::En => {
+            "How to handle symlinks in directory downloads: auto follows file symlinks and skips others, link creates local symlinks, skip ignores all symlinks"
+        }
+        Language::Zh => {
+            "目录下载时如何处理符号链接：auto 跟随指向文件的链接并跳过其他链接，link 创建本地符号链接，skip 忽略所有符号链接"
+        }
+    }
+}
+
+fn lfs_help(language: Language) -> &'static str {
+    match language {
+        Language::En => {
+            "How to handle Git LFS pointer files: error fails the file with an actionable error, media tries the GitHub media host (public GitHub only)"
+        }
+        Language::Zh => {
+            "Git LFS pointer 文件的处理方式：error 明确报错，media 尝试从 GitHub media 主机获取（仅公共 GitHub）"
+        }
+    }
+}
+
 fn language_help(language: Language) -> &'static str {
     match language {
         Language::En => {
@@ -228,6 +252,8 @@ mod tests {
         assert!(rendered.contains("--config"));
         assert!(rendered.contains("--overwrite"));
         assert!(rendered.contains("--keep-going"));
+        assert!(rendered.contains("--symlinks"));
+        assert!(rendered.contains("--lfs"));
         assert!(rendered.contains("--json"));
     }
 

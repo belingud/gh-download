@@ -25,6 +25,18 @@ pub fn quote_repo_path(path: &str) -> String {
 
 pub const DEFAULT_RAW_BASE: &str = "https://raw.githubusercontent.com";
 
+pub const DEFAULT_MEDIA_BASE: &str = "https://media.githubusercontent.com/media";
+
+pub fn build_media_file_url(repo: &str, rev: &str, repo_path: &str) -> String {
+    format!(
+        "{}/{}/{}/{}",
+        DEFAULT_MEDIA_BASE,
+        repo.trim_matches('/'),
+        rev.trim_matches('/'),
+        quote_repo_path(repo_path)
+    )
+}
+
 pub fn build_raw_file_url(repo: &str, rev: &str, repo_path: &str) -> String {
     format!(
         "{}/{}/{}/{}",
@@ -347,6 +359,14 @@ mod tests {
         assert_eq!(
             validated_metadata_file_name(Some(".."), "..").expect("fallback"),
             "downloaded-file"
+        );
+    }
+
+    #[test]
+    fn media_file_url_targets_media_host() {
+        assert_eq!(
+            build_media_file_url("onnx/models", "main", "validated/mnist-8.onnx"),
+            "https://media.githubusercontent.com/media/onnx/models/main/validated/mnist-8.onnx"
         );
     }
 
